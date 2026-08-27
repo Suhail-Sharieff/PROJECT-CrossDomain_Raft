@@ -1,0 +1,427 @@
+--- PAGE 6 ---
+When domainiis unavailable, since the Global Leader must
+reside in an available domain, it follows thati̸=z. TheGlobal
+Leader, upon receiving a write request, forwards the request
+to allDomain Leadersand initiates its in-domain consensus
+process. Once theGlobal Leaderreceives an acknowledgment
+from any other domain, it can respond to the client. This cross-
+domain latency is typically the latency between theGlobal
+Leader’s domain and the nearest other available, communica-
+ble domain. The client’s read request is sent directly to the
+Global Leader, and after the data is read from theGlobal
+Leader, it is immediately returned to the client. This entire
+read process also experiences a cross-domain RTT. Thus,L i
+is as shown in Equation (3), where domainjis an available
+domain.
+Li = 2·(l iz + min(lzj ))·W i + 2·l iz ·R i (3)
+Thus, the total global latency is as shown in Equation (4).
+We only need to find a Global Leader domain (i.e., domainz)
+that minimizesL s to reduce the system’s global cross-domain
+latency to the greatest extent possible.
+Ls =
+NX
+i=1
+Li i∈[1, N](4)
+The cost ofGlobal Leadermigration is a cross-domain RTT,
+so the time of periodic judgment (T p) needs to be much greater
+than the cross-domain RTT. When theGlobal Leaderis in the
+zdomain, Equation (5) should be satisfied.
+T p≫2·max(l zj )(5)
+F . Linearizability of CD-Raft
+CD-Raft ensures linearizability because its operations for
+appending, committing, and applying logs are strictly executed
+in index order, and CD-Raft satisfies the following two prop-
+erties [20], [21], sufficient to guarantee linearizability.
+P1.Visibility.A read operation sees the effects of all write
+operations that finished before it started.
+P2.Integrity.A read operation does not see the effects of
+any write operation that had not been committed at the time
+the read finished.
+In CD-Raft, when theGlobal Leaderprocesses a read
+operation, it sets theread indexto thein-domain commit index
+of theGlobal Leader. Because thecommit indexis less than or
+equal to thein-domain commit index, the read operation can
+see all the write operations that have been committed, thus
+satisfying P1. In addition, because read requests can only see
+the results of write operations afterApply, andApplycan only
+be done afterCommit, so read operations cannot see write
+operations that have not been committed, thus satisfying P2.
+G. Correctness
+We developed a formal specification and correctness proof
+for the CD-Raft described in this section. The formal spec-
+ification, written in the TLA+ specification language [22],
+precisely models theFast Returnstrategy under a dual-leader
+architecture. We have mechanically proved the correctness
+TABLE II: The YCSB workloads used in evaluations.
+Workload Write Type Query Type Category
+Load Insert / Insert Only
+A Update Point Query 50%update 50%read
+B Update Point Query 5%update 95%read
+C / Point Query Read Only
+of CD-Raft using the TLA+ proof system [23]. The TLA+
+source code is available at: https://github.com/Czq0001/CD-
+Raft-TLA.git.
+IV. IMPLEMENTATIONANDEVALUATION
+A. System Implementation
+We have implemented a CD-Raft prototype system in Go
+language, employing RocksDB [24] as the underlying key-
+value storage engine. The distributed communication frame-
+work employs gRPC [25] and Google Protocol Buffers [26],
+enabling efficient node-to-node data serialization and message
+exchange.
+B. Experimental Setup
+Environment and Parameters.To evaluate the actual perfor-
+mance of CD-Raft, we conducted experiments on the Huawei
+Cloud Platform. These experiments were performed in a real
+cross-domain network environment containing four domains
+(Beijing, Shanghai, Guangzhou, and Guiyang), with three
+server nodes and one client node deployed in each domain.
+Each node was equipped with 32GB of DRAM and a 1TB
+SSD, running the Ubuntu 22.04.4 LTS operating system.
+Server nodes ran instances of the consensus protocol under
+evaluation. Client nodes utilized YCSB to generate request
+streams for assessing the performance of CD-Raft.
+WorkLoad.To systematically evaluate the performance
+benefits of CD-Raft, we conducted extensive comparative
+experiments across various dimensions. Detailed workload
+parameters are shown in Table II. These included Load (insert-
+only), Workload A (50:50 read/update ratio), Workload B
+(95:5 read/update ratio), and Workload C (read-only). Keys
+followed a Zipf distribution. This approach simulates real-
+world scenarios where certain keys experience higher access
+frequency. Each key-value pair contained a 16 B key and a 1
+KB value by default.T pis set to 100 times of cross-domain
+RTT.
+Baselines.To comprehensively evaluate the performance of
+CD-Raft, we selected the following six protocols for compar-
+ison:
+•Raft:A widely adopted, leader-based consensus protocol
+that ensures strong consistency.
+•PigPaxos[27]: A consensus protocol designed to opti-
+mize cross-domain communication through a hierarchical
+architecture.
+•Mencius[28]: A consensus protocol that employs a
+rotating leader strategy.
+•GeoLM[29]: A leader management strategy designed
+to improve Raft’s performance in cross-domain environ-
+ments by adapting to network and application changes.
+
+--- PAGE 7 ---
+(a) Average latency
+ (b) Average write latency
+ (c) Average read latency
+Fig. 8: Comparison of latencies among Raft, PigPaxos, Mencius, GeoLM, FR, and CD-Raft under YCSB workloads.
+•FR: A basic version of CD-Raft implementing only the
+Fast Returnstrategy. This version is used to isolate
+and evaluate the performance gain specifically from this
+strategy.
+•CD-Raft: The complete CD-Raft system, featuring tightly
+coupledFast ReturnandOptimal Global Leader Position
+strategies.
+Leader Configuration.In this experimental evaluation, we
+configured the leader locations for the compared protocols as
+follows: For the Raft, PigPaxos, and FR, in scenarios that
+included the Beijing domain, their leader (specifically, the
+Global Leaderfor FR) was fixed in the Beijing domain; oth-
+erwise, it was fixed in the Shanghai domain (see Section IV-E
+for details). CD-Raft, in contrast, utilized itsOptimal Global
+Leader Positionstrategy to select the optimalGlobal Leader
+domain. Through such a comparative setup, the purpose is to
+quantify the effects of theFast Returnstrategy and theOptimal
+Global Leader Positionstrategy on reducing latency. The
+standard three-domain configuration mentioned later refers to
+the Beijing-Shanghai-Guangzhou domains.
+C. Overall Results
+To evaluate the overall performance of CD-Raft in cross-
+domain sites, we conducted experiments using a standard
+three-domain configuration. We measured and compared the
+average operation latency, as well as (99th percentile) tail
+latency, of CD-Raft against baseline protocols Raft, PigPaxos,
+Mencius, GeoLM, and FR under four YCSB workloads. At
+the beginning of the experiment, each client first performed a
+data load of 1 million key-value pairs, and then performed 1
+million operations for Workload A, Workload B, and Workload
+C respectively.
+Latency.Fig. 8a shows the average latency of each protocol
+under different YCSB workloads. Raft and PigPaxos have
+very similar performances because their leaders are both fixed
+in Beijing and their core processes are similar. Mencius, as
+a rotating leader protocol, can be regarded as the average
+performance of Raft under different domains. GeoLM is the
+leader’s performance on the optimal domain, but the write
+request of the client outside the leader domain still needs two
+cross-domain RTTs.
+Under heavy write loads (Load and WorkLoad A), CD-Raft
+shows significant performance advantages. Compared to Raft,
+PigPaxos, Mencius, and GeoLM, CD-Raft’s average latency
+under the Load workload decreased by 34%∼41%, and its
+tail latency also decreased by 42%∼52%. FR, which only uses
+theFast Returnstrategy, also performs well, with its average
+latency reduced by 24%∼31%, and its tail latency also reduced
+by 20%∼34%. Under WorkLoad A, CD-Raft’s average latency
+decreased by 25%∼33%, and its tail latency also decreased
+by 42%∼52% compared with Raft, PigPaxos, Mencius, and
+GeoLM.
+Under heavy read loads (WorkLoad B and WorkLoad C),
+the improvement in average latency for CD-Raft is relatively
+limited. However, even in these read-dominant scenarios, CD-
+Raft can still significantly reduce tail latency when write
+requests are present. Under Workload B, CD-Raft’s average
+latency was reduced by 7%∼20% and its tail latency was also
+reduced by 49%∼53%, compared to Raft, PigPaxos, Mencius,
+and GeoLM. When there is no write request, GeoLM can
+achieve similar performance as CD-Raft.
+As Fig.8b shows, CD-Raft achieves the lowest average write
+latency under different YCSB workloads. The average write
+latency of CD-Raft is 39%∼41% lower than that of Raft,
+PigPaxos and Mencius, and 35%∼36% lower than that of
+GeoLM. Regarding tail latency, CD-Raft reduced tail latency
+by 49%∼53% compared to Raft, PigPaxos, and Mencius, and
+by 42%∼43% compared to GeoLM. Even when FR’sGlobal
+Leaderis not in the optimal domain, it still achieves significant
+performance improvements. The average write latency of FR
+is 30%∼32% lower than that of Raft, PigPaxos, and Mencius,
+and 24%∼26% lower than that of GeoLM.
+As Fig.8c shows, CD-Raft achieves the lowest average read
+latency under different YCSB workloads. The average read
+latency of CD-Raft is 17%∼19% lower than that of Raft
+and PigPaxos, and 15%∼17% lower than that of Mencius.
+Regarding tail latency, CD-Raft reduced it by 18%∼21%
+compared to Raft, PigPaxos and Mencius.
+The experimental results above clearly show that CD-Raft
+exhibits significant optimization effects in terms of average
+latency, write latency, read latency, and tail latency.
+D. Impacts of the Distribution of Client Requests
+To investigate the impact of the geographical distribution of
+client requests on protocol performance, experiments in this
+section were based on the standard three-domain configuration.
+We systematically evaluated system performance under a
+
+--- PAGE 8 ---
+(a) Average latency
+ (b) Average write latency
+ (c) Average read latency
+Fig. 9: Comparison of latencies among Raft, PigPaxos, Mencius, GeoLM, FR, and CD-Raft under Different Client Request
+Distributions(8-1-1).
+(a) Average latency
+ (b) Average write latency
+ (c) Average read latency
+Fig. 10: Comparison of latencies among Raft, PigPaxos, Mencius, GeoLM, FR, and CD-Raft under Different Geographical
+Topologies.
+skewed workload distribution across the three domains with an
+80%-10%-10% ratio (denoted 8-1-1). Each client performed
+1 million requests, evenly split between reads and writes
+(50% each). This evaluation aimed to reveal the sensitivity
+and adaptability of each protocol to variations in geographical
+load distribution, with a particular focus on the optimization
+effectiveness of CD-Raft in these scenarios.
+As Fig.9 shows, CD-Raft achieves the lowest latency in
+all cases. Even when 80% of requests are in the Beijing
+domain (where the leader of Raft is located), CD-Raft still
+reduces average latency by 9.42% and tail latency by 48.44%
+compared to Raft, with both read and write latencies showing
+respective decreases.
+E. Impacts of Geographical Topology
+To comprehensively evaluate the universality and perfor-
+mance advantages of CD-Raft under different geographi-
+cal network topologies, this experiment selected four city
+domains representing different regions of China: Beijing
+(BJ), Shanghai (SH), Guangzhou (GZ), and Guiyang (GY).
+From these, four distinct sets of three-domain cluster con-
+figurations were constructed for testing. These configura-
+tions include: Beijing-Shanghai-Guiyang, Beijing-Shanghai-
+Guangzhou, Beijing-Guangzhou-Guiyang, and Shanghai-
+Guangzhou-Guiyang. Each client performed 1 million re-
+quests, evenly split between reads and writes (50% each).
+In the benchmark performance comparisons, the leaders of
+Raft and PigPaxos and theGlobal Leaderof FR used a fixed
+deployment: if the configuration included the Beijing domain,
+deployment was in Beijing; if it was the Shanghai-Guangzhou-
+Guiyang configuration without Beijing, deployment was in the
+Shanghai domain.
+As Fig.10 plots, CD-Raft achieves the lowest latency in all
+cases. This demonstrates that CD-Raft performs well under
+different geographical network topologies.
+F . Impacts of Domain Count
+To evaluate the scalability of CD-Raft under varying do-
+main scales, this experiment analyzes how protocol perfor-
+mance changes as the number of domains increases. We
+utilized four geographical domains to incrementally construct
+cluster configurations of three scales: 2-domain (Beijing-
+Shanghai), 3-domain (Beijing-Shanghai-Guangzhou), and 4-
+domain (Beijing-Shanghai-Guangzhou-Guiyang). Each client
+performed 1 million requests, evenly split between reads and
+writes (50% each).
+As Fig.11 plots, CD-Raft achieves the lowest latency in all
+cases. As the number of domains increases, CD-Raft’s advan-
+tages become more obvious, because CD-Raft only requires
+two domains to commit, while Raft requires more than half of
+the nodes to commit. The system becomes unavailable only
+when both theGlobal Leaderdomain and another domain fail
+simultaneously, requiring one domain to recover.
+G. Comparison with the Leaderless Consensus Protocol
+This experiment measures and compares the average latency
+of CD-Raft and the leaderless protocol EPaxos under different
+key-value pair conflict rates. We set five levels for the key-
+value pair conflict rate: 0% (no conflict), 25%, 50%, 75%, and
+
+--- PAGE 9 ---
+(a) Average latency
+ (b) Average write latency
+ (c) Average read latency
+Fig. 11: Comparison of latencies among Raft, PigPaxos, Mencius, GeoLM, FR, and CD-Raft with Varying Domain Counts.
+Fig. 12: Comparison of latencies between EPaxos and CD-
+Raft under different key-value pair conflict rates.
+100% (full conflict). All tests were conducted under a standard
+three-domain configuration. Each client performed one million
+write requests.
+Fig. 12 presents the average latencies of CD-Raft and
+EPaxos under different key-value pair conflict rates. The exper-
+imental results show that CD-Raft exhibits stable and excellent
+performance in all cases. EPaxos’s performance, however,
+deteriorates as the conflict rate increases. Specifically, when
+there is no conflict (0% conflict rate), both EPaxos and
+CD-Raft exhibit excellent performance. As the conflict rate
+increases from 25% to 100%, the average latency reduction
+of CD-Raft compared to EPaxos significantly widens from
+14.07% to 57.49%, while its tail latency is reduced by an
+average of 59.87%. These results highlight CD-Raft’s excellent
+performance and stability in environments with data conflicts.
+Furthermore, we evaluated read performance at a 0% con-
+flict rate (0 Workload C). EPaxos’ read requests also need
+to go through the consensus process, which requires at least
+one cross-domain RTT. For CD-Raft, when the client and
+theGlobal Leaderare in the same domain, they can read
+directly from theGlobal Leaderwithout cross-domain RTT.
+Consequently, CD-Raft demonstrates a significant decrease in
+read latency compared to EPaxos.
+V. RELATEDWORK
+In cross-domain environments with cross-domain disaster
+tolerance requirements, we have compared the following con-
+sensus protocols as shown in Table III. PigPaxos [27] uses
+a hierarchical architecture to reduce cross-domain communi-
+TABLE III: Comparison of Consensus Protocols.
+ProtocolCross-domain RTTGeneralityCross-domain CommunicationRaft 2 Strong ManyPigpaoxs 2 Strong FewMencius 2 Strong ManyGeoLM 2 Strong ManyWPaxos 2 Strong ManyFlexible Paxos 2 Strong ManyFast Paxos 1.5 Strong ManySpeculative Paxos1 Weak ManyNetwork-Ordered1 Weak ManyCURP 1 or 2 Weak ManyEPaxos 1 or 2 Weak ManyCD-Raft 1 Strong Few
+cation, and Mencius [28] rotates leaders to mitigate single-
+point bottlenecks. GeoLM [29] adopts a leader management
+strategy that aims to improve the performance of Raft in
+cross-domain environments. However, GeoLM still requires
+two cross-domain RTTs to handle write requests from clients
+outside the leader domain. Although WPaxos [30] and Flexible
+Paxos [19] have different quorums, they still require two
+cross-domain RTTs to ensure cross-domain disaster tolerance.
+In Fast Paxos [31], the client directly sends the request to
+all replicas, reducing the latency by 0.5 cross-domain RTTs.
+Speculative Paxos [32] and Network-Ordered Paxos [33] rely
+on specialized networks to ensure the order in which requests
+arrive at replicas, which limits their generality. CURP [34]
+and EPaxos [3] need to determine inter-request dependencies,
+thus lacking generality. Furthermore, when requests conflict,
+they require additional RTTs to resolve those conflicts. Our
+CD-Raft requires only one cross-domain RTT, offers strong
+generality, and also reduces the amount of cross-domain
+communication.
+VI. CONCLUSION
+In cross-domain environments, cross-domain RTT becomes
+a major performance bottleneck for distributed consensus
+protocols. As a commonly used consensus protocol, Raft faces
+the challenge of high latency when maintaining consistency in
+cross-domain environments, especially when clients and the
+leader are located in different domains. To address this issue,
+we propose an improved consensus protocol, CD-Raft. This
+is an optimized Raft protocol, which significantly reduces the
+high latency caused by cross-domain interactions throughFast
+Returnstrategy andOptimal Global Leader Positionstrategy.
+CD-Raft is efficient,with the potential for wide application in
+cross-domain data center environments.
+
+--- PAGE 10 ---
+REFERENCES
+[1] L. Sani, A. Iacobet al., “The future of large language model pre-training
+is federated,”arXiv preprint arXiv:2405.10853, 2024.
+[2] B. F. Cooper, A. Silberstein, E. Tam, R. Ramakrishnan, and R. Sears,
+“Benchmarking cloud serving systems with ycsb,” inProceedings of the
+1st ACM symposium on Cloud computing, 2010, pp. 143–154.
+[3] I. Moraru, D. G. Andersen, and M. Kaminsky, “There is more consensus
+in egalitarian parliaments,” inProceedings of the Twenty-F ourth ACM
+Symposium on Operating Systems Principles, 2013, pp. 358–372.
+[4] L. Lamport, “Paxos made simple,”ACM SIGACT News (Distributed
+Computing Column) 32, 4 (Whole Number 121, December 2001), pp.
+51–58, 2001.
+[5] D. Ongaro and J. Ousterhout, “In search of an understandable consensus
+algorithm,” in2014 USENIX annual technical conference (USENIX ATC
+14), 2014, pp. 305–319.
+[6] D. Ongaro,Consensus: Bridging theory and practice. Stanford
+University, 2014.
+[7] L. Leslie, “The part-time parliament,”ACM Trans. on Computer Systems,
+vol. 16, pp. 133–169, 1998.
+[8] “ETCD,” 2025. [Online]. Available: https://github.com/etcd-io/etcd
+[9] “CockroachDB,” 2025. [Online]. Available: https://github.com/
+cockroachdb/cockroach
+[10] “YugabyteDB,” 2025. [Online]. Available: https://github.com/yugabyte/
+yugabyte-db
+[11] “TiDB,” 2025. [Online]. Available: https://github.com/pingcap/tidb
+[12] “Kudu,” 2025. [Online]. Available: https://kudu.apache.org/.
+[13] “NebulaGraph,” 2025. [Online]. Available: https://github.com/vesoft-inc/
+nebula.
+[14] “Logcabin,” 2025. [Online]. Available: https://github.com/logcabin/
+logcabin.
+[15] “Dragonboat,” 2025. [Online]. Available: https://github.com/lni/
+dragonboat.
+[16] W. Cao, Z. Liu, P. Wang, S. Chen, C. Zhu, S. Zheng, Y . Wang, and
+G. Ma, “Polarfs: an ultra-low latency and failure resilient distributed
+file system for shared storage cloud database,”Proceedings of the VLDB
+Endowment, vol. 11, no. 12, pp. 1849–1862, 2018.
+[17] W. Cao, Y . Zhang, X. Yang, F. Li, S. Wang, Q. Hu, X. Cheng, Z. Chen,
+Z. Liu, J. Fanget al., “Polardb serverless: A cloud native database for
+disaggregated data centers,” inProceedings of the 2021 International
+Conference on Management of Data, 2021, pp. 2477–2489.
+[18] M. P. Herlihy and J. M. Wing, “Linearizability: A correctness condition
+for concurrent objects,”ACM Transactions on Programming Languages
+and Systems (TOPLAS), vol. 12, no. 3, pp. 463–492, 1990.
+[19] H. Howard, D. Malkhi, and A. Spiegelman, “Flexible paxos: Quorum
+intersection revisited,”arXiv preprint arXiv:1608.06696, 2016.
+[20] H. Zhu, Z. Bai, J. Li, E. Michael, D. R. K. Ports, I. Stoica, and X. Jin,
+“Harmonia: near-linear scalability for replicated storage with in-network
+conflict detection,”Proc. VLDB Endow., vol. 13, no. 3, p. 376–389, Nov.
+2019. [Online]. Available: https://doi.org/10.14778/3368289.3368301
+[21] Y . Wang, Z. Wang, Y . Chai, and X. Wang, “Rethink the linearizability
+constraints of raft for distributed systems,”IEEE Transactions on
+Knowledge and Data Engineering, vol. 35, no. 11, pp. 11 815–11 829,
+2023.
+[22] L. Lamport,Specifying systems. Addison-Wesley Boston, 2002, vol.
+388.
+[23] D. Cousineau, D. Doligez, L. Lamport, S. Merz, D. Ricketts, and
+H. Vanzetto, “Tla+ proofs,” inInternational Symposium on F ormal
+Methods. Springer, 2012, pp. 147–154.
+[24] “RocksDB,” 2025. [Online]. Available: http://rocksdb.org/
+[25] “gRPC,” 2025. [Online]. Available: https://grpc.io/
+[26] “protobuf,” Jan. 2025. [Online]. Available: https://github.com/
+protocolbuffers/protobuf
+[27] A. Charapko, A. Ailijiang, and M. Demirbas, “Pigpaxos: Devouring the
+communication bottlenecks in distributed consensus,” inProceedings of
+the 2021 International Conference on Management of Data, 2021, pp.
+235–247.
+[28] Y . Mao, F. P. Junqueira, and K. Marzullo, “Mencius: building efficient
+replicated state machines for wans,” 2008.
+[29] D. Xu, D. Zhang, T. Li, Y . Chai, Z. Sun, W. Li, Y . Liu, Q. Wang, J. Liang,
+Y . Renet al., “Geolm: Performance-oriented leader management for
+geo-distributed consensus protocol,” inIEEE INFOCOM 2025-IEEE
+Conference on Computer Communications. IEEE, 2025, pp. 1–10.
+[30] A. Ailijiang, A. Charapko, M. Demirbas, and T. Kosar, “Wpaxos: Wide
+area network flexible consensus,”IEEE Transactions on Parallel and
+Distributed Systems, vol. 31, no. 1, pp. 211–223, 2019.
+[31] L. Lamport, “Fast paxos,”Distributed Computing, vol. 19, pp. 79–103,
+2006.
+[32] D. R. Ports, J. Li, V . Liu, N. K. Sharma, and A. Krishnamurthy,
+“Designing distributed systems using approximate synchrony in data
+center networks,” in12th USENIX Symposium on Networked Systems
+Design and Implementation (NSDI 15), 2015, pp. 43–57.
+[33] J. Li, E. Michael, N. K. Sharma, A. Szekeres, and D. R. Ports,
+“Just say{NO}to paxos overhead: Replacing consensus with network
+ordering,” in12th USENIX Symposium on Operating Systems Design
+and Implementation (OSDI 16), 2016, pp. 467–483.
+[34] S. J. Park and J. Ousterhout, “Exploiting commutativity for practical fast
+replication,” in16th USENIX Symposium on Networked Systems Design
+and Implementation (NSDI 19), 2019, pp. 47–64.
+

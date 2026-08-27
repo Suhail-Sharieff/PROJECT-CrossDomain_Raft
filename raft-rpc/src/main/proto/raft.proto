@@ -1,0 +1,52 @@
+syntax = "proto3";
+package raftkv;
+option java_package = "raftkv.rpc.proto";
+option java_multiple_files = true;
+
+service RaftService {
+  rpc RequestVote (VoteRequest) returns (VoteResponse);
+  rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+}
+
+service KVService {
+  rpc Put (PutRequest) returns (PutResponse);
+  rpc Get (GetRequest) returns (GetResponse);
+}
+
+message VoteRequest {
+  int64 term = 1;
+  int32 candidateId = 2;
+  int64 lastLogIndex = 3;
+  int64 lastLogTerm = 4;
+}
+
+message VoteResponse {
+  int64 term = 1;
+  bool voteGranted = 2;
+}
+
+message AppendEntriesRequest {
+  int64 term = 1;
+  int32 leaderId = 2;
+  int64 prevLogIndex = 3;
+  int64 prevLogTerm = 4;
+  repeated LogEntryProto entries = 5;
+  int64 leaderCommit = 6;
+}
+
+message AppendEntriesResponse {
+  int64 term = 1;
+  bool success = 2;
+  int64 matchIndex = 3; // helps leader update nextIndex faster on conflict
+}
+
+message LogEntryProto {
+  int64 term = 1;
+  int64 index = 2;
+  string command = 3; // e.g. "PUT key value"
+}
+
+message PutRequest { string key = 1; string value = 2; }
+message PutResponse { bool success = 1; int32 leaderId = 2; }
+message GetRequest { string key = 1; }
+message GetResponse { bool success = 1; string value = 2; int32 leaderId = 3; }

@@ -1,0 +1,30 @@
+# Gradle build directories
+.gradle/
+build/
+**/build/
+
+# Local Gradle distribution directory (from setup)
+.gradle-dist/
+
+# Local persistent data directory for Raft nodes
+data/
+**/data/
+
+# IDE directories and files
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+.classpath
+.project
+.settings/
+bin/
+
+# Log files
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  node-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: node-1 # if we dont put this, docker assigns name as docker-node-1-1(this number is ith instance of node-1) 1  (Instance Number): Because Docker Compose supports scaling services (e.g. running 5 copies of  node-1  via  docker compose up --scale node-1=5 ), it appends  -1  for the first replica,  -2  for the second, and so on.
+    ports:
+      - "8001:8001"
+    environment:
+      - NODE_ID=1
+      - NODE_PORT=8001
+      - PEERS=2=node-2:8001,3=node-3:8001
+      - ELECTION_TIMEOUT_MIN_MS=300
+      - ELECTION_TIMEOUT_MAX_MS=600
+      - HEARTBEAT_INTERVAL_MS=50
+      - DATA_DIR=/app/data
+    volumes:
+      - node-1-data:/app/data
+
+  node-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: node-2
+    ports:
+      - "8002:8001"
+    environment:
+      - NODE_ID=2
+      - NODE_PORT=8001
+      - PEERS=1=node-1:8001,3=node-3:8001
+      - ELECTION_TIMEOUT_MIN_MS=300
+      - ELECTION_TIMEOUT_MAX_MS=600
+      - HEARTBEAT_INTERVAL_MS=50
+      - DATA_DIR=/app/data
+    volumes:
+      - node-2-data:/app/data
+
+  node-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8003:8001"
+    container_name: node-3
+    environment:
+      - NODE_ID=3
+      - NODE_PORT=8001
+      - PEERS=1=node-1:8001,2=node-2:8001
+      - ELECTION_TIMEOUT_MIN_MS=300
+      - ELECTION_TIMEOUT_MAX_MS=600
+      - HEARTBEAT_INTERVAL_MS=50
+      - DATA_DIR=/app/data
+    volumes:
+      - node-3-data:/app/data
+
+volumes:
+  node-1-data:
+  node-2-data:
+  node-3-data:

@@ -1,0 +1,38 @@
+plugins {
+    id 'java'
+    id 'com.google.protobuf' version '0.9.4' apply false
+}
+
+allprojects {
+    group = 'raftkv'
+    version = '1.0-SNAPSHOT'
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    dependencies {
+        // Logging
+        implementation 'org.slf4j:slf4j-api:2.0.12'
+        implementation 'ch.qos.logback:logback-classic:1.5.3'
+
+        // Testing
+        testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+        testImplementation 'org.awaitility:awaitility:4.2.0'
+    }
+
+    test {
+        useJUnitPlatform()
+    }
+}

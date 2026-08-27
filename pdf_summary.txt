@@ -1,0 +1,561 @@
+=== CD-RAFT PDF EXTRACT ===
+
+--- PAGE 1 ---
+CD-Raft: Reducing the Latency of Distributed
+Consensus in Cross-Domain Sites
+Yangyang Wang†‡ , Ziqian Cheng †‡ , Yucong Dong †‡ , and Zichen Xu †‡*
+†School of Artificial Intelligence, Nanchang University, China
+‡School of Mathematics and Computer Sciences, Nanchang University, China
+Abstract—Today’s massive AI computation loads push heavy
+data synchronization across sites, i.e., nodes in data centers. Any
+reduction in such consensus latency can significantly improve the
+overall performance of desired systems. This consensus challenge
+explosively peaks at cross-domain sites. In this paper, we pro-
+posed CD-Raft to address the cross-domain latency challenge, an
+optimized Raft protocol for strong consistency in cross-domain
+sites. CD-Raft can significantly reduce consensus latency by
+optimizing cross-domain round-trip time (RTT) for reads and
+writes, as well as carefully positioning the leader node. We
+verified the correctness of CD-Raft in a formal specification
+using the TLA+ specification, guaranteeing the strong consistency
+across sites. We have prototyped CD-Raft and evaluated it using
+the YCSB benchmark. Empirical results show that compared to
+the classic Raft, CD-Raft reduces the average latency by 32.90%
+and (99th percentile) tail latency by 49.24% for renown traces
+across multiple sites.
+Index Terms—Latency, Consensus, Distributed system, Cross-
+domain
+I. INTRODUCTION
+Large-scale AI computational workloads, especially those
+involving data or task parallelism, often require frequent
+synchronization of state and data across different devices
+to sites, in order to ensure consistency and accuracy. This
+strong consistency actions fork unprecedented overhead in
+the overall computation performance. What is worse, such
+workloads usually invoke more devices than one single site
+holds, thus requiring geographically distributed consistency
+across different sites, leading to frequent reads/writes at least
+in the Second-Level Domain (SLD). Such cross-domain data
+synchronization puts a simple yet challenging requirement
+for today’s consistency protocol: a light-weight consistency
+framework under heavy tail network traffic in distance. For
+example, a single data transmission for a 7-billion-parameter
+(7B) model can be as large as 28GB [1].
+Therefore, the demand for massive data synchronization,
+combined with high cross-domain communication latency,
+renders the latency of the underlying consensus protocol
+the decisive bottleneck for system performance. For leader-
+based distributed consensus protocols, a write request typically
+involves two cross-domain RTTs (long RTTs): the first cross-
+domain RTT occurs between the client and the leader (when
+the client and the leader are in different domains) for the
+This work is supported by the National Key R&D Program of China under
+Grant 2022YFB4501703, the Jiangxi Provincial Career-Early Young Scien-
+tists and Technologists Cultivation Project under Grant 20252BEJ730003,
+and the Jiangxi Provincial Natural Science Foundation under Grant
+20252BAC200615. Corresponding author: *Zichen Xu (xuz@ncu.edu.cn).
+sending and acknowledgment of the request. The second cross-
+domain RTT is performed between the leader and nodes in
+other domains to achieve data consistency confirmation. In
+this case, the cross-domain latency in leader-based distributed
+consensus protocols significantly impacts the write request
+response time in distributed systems. Therefore, optimizing
+this communication process is essential to improve system
+performance and reduce latency. In addition, the choice of the
+leader’s position directly affects communication efficiency, so
+optimizing the leader’s position strategy is important.
+To address the aforementioned challenge, we propose CD-
+Raft, an optimized Raft protocol suitable for cross-domain
+sites. CD-Raft introduces two leader roles, theDomain Leader
+and theGlobal Leader. In CD-Raft, each domain’s consensus
+operations are managed by theDomain Leader, while the
+Global Leadercoordinates consensus operations across all
+Domain Leaders. Additionally, theDomain Leadercan act
+as a proxy for theGlobal Leaderin responding to the client.
+CD-Raft is specifically optimized for cross-domain sites and
+incorporates two key strategies—Fast ReturnandOptimal
+Global Leader Position—designed to accelerate cross-domain
+operations. Through these strategies, CD-Raft reduces the
+number of cross-domain RTTs for client requests, minimizing
+the total global latency while ensuring cross-domain disaster
+tolerance.
+We have implemented a CD-Raft-based prototype system
+and rigorously evaluated its performance emulating the YCSB
+benchmark [2]. The experimental results indicate that CD-
+Raft substantially enhances system performance, reducing the
+read and write latency across various workloads. For example,
+compared to Raft, CD-Raft reduces the average latency by
+39.81% and tail latency by 49.44% in a write-only workload.
+In a typical read/write-balanced workload, CD-Raft reduces
+the average latency by 32.90% and the tail latency by 49.24%.
+The main contributions of this paper are as follows:
+•We identify the performance bottlenecks of leader-based
+distributed consensus protocols in cross-domain environ-
+ments. To ensure cross-domain disaster tolerance, leader-
+based distributed consensus protocols face two cross-domain
+RTTs during communication (when the client and the leader
+are in different domains) and data synchronization.
+•We propose CD-Raft, a protocol designed for distributed
+systems in cross-domain sites. By introducing two new
+strategies—Fast ReturnandOptimal Global Leader Posi-
+tion—CD-Raft effectively reduces read/write latency while
+ensuring cross-domain disaster tolerance. Additionally, we
+arXiv:2603.10555v1  [cs.DC]  11 Mar 2026
+
+--- PAGE 2 ---
+Fig. 1: The write flow of Raft.
+verified the correctness of CD-Raft in a formal specification
+using the TLA+ specification.
+•We implemented a CD-Raft-based prototype system and
+conducted extensive experiments emulating the YCSB
+benchmark to validate its performance advantages. Empir-
+ical results show that CD-Raft significantly reduces the
+latency of handling client requests in cross-domain sites.
+II. BACKGROUNDANDMOTIVATION
+A. Background
+Distributed consensus protocols are divided into leaderless
+consensus protocols and leader-based consensus protocols.
+Leaderless consensus protocols, such as EPaxos [3], need to
+determine inter-request dependencies, thus lacking generality.
+Furthermore, when requests conflict, they require additional
+RTTs to resolve those conflicts. Therefore, we mainly discuss
+leader-based consensus protocols. Among them, Multi-Paxos
+[4] and Raft [5], [6] are relatively classic representatives. Since
+Raft and Multi-Paxos are similar in design and implementa-
+tion, we will take Raft as an example below to introduce the
+processing flow of client read and write requests.
+Raft is generally considered easier to understand and deploy
+than Paxos [7], making it a more accessible and implementable
+alternative. Since its introduction in 2014, Raft has been
+rapidly adopted by various real-world distributed systems,
+including Etcd [8], CockroachDB [9], YugabyteDB [10],
+TiDB [11], Kudu [12], NebulaGraph [13], LogCabin [14],
+Dragonboat [15], PolarFS [16] and PolarDB [17], etc. The
+maintenance of consistency in Raft consists of three core parts:
+leader election, log replication, and safety assurance.
+Raft processes all client requests by electing a unique leader
+node and ensures linearizability [18] through three phases:Ap-
+pend,Commit, andApply. To facilitate consistent and ordered
+request processing, Raft employs multiple indexes, including
+acommit index, anapply index, and aread index.
+Fig. 1 illustrates the operation flow of a client write request.
+When a client sends a write request, it initially reaches the
+Raft’s leader (Step①). The leader appends the request to its
+local persistent log and forwards it to the followers (Step②),
+waiting for them to complete the log append and acknowledge
+success. Upon receiving acknowledgment from a majority of
+nodes (i.e., more than half of the nodes), the leader marks the
+request as committed and updates thecommit index, ensuring
+data safety even in the event of node failure. Finally, the leader
+Fig. 2: The read flow of Raft.
+and followers apply the committed request to their respective
+state machines (Step③) and update their respectiveapply
+index. Once the leader completes the apply operation, it returns
+the result to the client (Step④). This entire process requires
+that operations be executed in the order of request arrival to
+maintain data consistency.
+Fig. 2 illustrates the operation flow of a client read request
+[6]. When the client sends a read request, the leader receives
+the read request and sets theread indexto the currentcommit
+index, i.e., 4. However, at timet1, the leader’sapply index
+remains at 0. To ensure linearizability, it is necessary to wait
+until theapply indexcatches up with theread indexbefore
+reading data from the state machine (at timet2) to process the
+Get(Y) operation. This approach ensures that new data is read
+instead of out-of-date data, i.e., ′′Y = 2 ′′ instead of ′′Y = 0 ′′.
+B. Motivation
+In cross-domain distributed systems, maintaining consis-
+tency in support of cross-domain disaster tolerance presents a
+challenge for leader-based consensus protocols due to the high
+latency involved, particularly when the client and the leader
+are located in different domains.
+As illustrated in Fig. 3, long latency issues arise when
+the client and the leader node are in separate domains (with
+the leader in domain A and the client in domain B). The
+entire write process requires two cross-domain RTTs (long
+RTTs). The first cross-domain RTT occurs between the client
+and the leader (Step①and Step④) for the sending and
+acknowledgment of the request. The second cross-domain RTT
+is performed between the leader and nodes in other domains
+to achieve data consistency confirmation (Step②and Step
+③). The cross-domain issue significantly increases system
+Fig. 3: Write request processing flow of leader-based consen-
+sus protocol in cross-domain sites.
+response time, particularly under write-intensive workloads,
+resulting in noticeable waiting times for clients and negatively
+impacting overall system performance and user experience.
+
+--- PAGE 3 ---
+To address this issue, we propose an optimized Raft protocol,
+termed CD-Raft (Cross-Domain Raft), which builds on the
+leader-based consensus protocol. CD-Raft reduces the number
+of cross-domain RTTs required for write operations to a single
+RTT through theFast Returnstrategy, thereby reducing the
+latency of leader-based consensus protocols in cross-domain
+distributed systems (see Section III-B for details).
+In addition, in leader-based consensus protocols, the leader
+is usually elected randomly. However, due to the differences
+in the number of client requests in different domains and the
+uneven communication latency between domains, the position
+of the leader has a significant impact on the total global
+latency. To solve this problem, CD-Raft introduces anOptimal
+Global Leader Positionstrategy, which can optimize the
+leader’s position to minimize total global latency (see Section
+III-E for details).
+III. DESIGNOFCD-RAFT
+To address the above challenges in cross-domain sites, we
+propose CD-Raft, an optimized Raft protocol specifically for
+cross-domain sites. CD-Raft aims to reduce the processing
+latency of cross-domain requests.
+A. Overview
+Fig. 4: The architecture of CD-Raft.
+As illustrated in Fig. 4, CD-Raft adopts a layered archi-
+tectural design. It performs the consensus operation upon
+receiving client requests from the request layer, reducing
+response times through theFast Returnstrategy. CD-Raft
+offers fault tolerance; when node downtime or message loss
+occurs, the consensus layer provides appropriate strategies
+to ensure system availability. In addition, the decision layer
+continuously monitors the number of requests from different
+domains and periodically performs calculations in the back-
+ground to determine the optimalGlobal Leader, aiming to
+minimize the total global latency. CD-Raft effectively reduces
+system latency while ensuring data security (i.e., more than
+half of the nodes in the domain hold data) across at least two
+domains.
+B. Fast Return
+As discussed in Section II-B, leader-based consensus pro-
+tocols can experience significant network latency during write
+operations in cross-domain sites. Through theFast Return
+strategy, this approach reduces the write operation to a single
+cross-domain RTT.
+Unlike Raft, CD-Raft employs two types of leaders: the
+Domain Leaderand theGlobal Leader. As illustrated in Fig. 5,
+CD-Raft elects aDomain Leaderfor each domain and a
+Global Leaderfrom among theDomain Leaders. TheGlobal
+Leaderoversees communication withDomain Leaders, while
+eachDomain Leadermanages consensus operations within its
+respective domain. TheGlobal Leaderalso participates in the
+consensus process within its domain. In-domain consensus
+operates similarly to the Raft protocol. Once a majority of
+nodes in the domain hold the new data, it is recognized as
+secure, and theDomain Leadercommunicates this status to
+theGlobal Leader.
+Fig. 5: The communication flow of CD-Raft.
+When the client and theGlobal Leaderare located in
+different domains, as illustrated in Fig. 6a (with the client
+in domain B and theGlobal Leaderin domain A), the client’s
+write request is first sent to theGlobal Leader(Step 1.①).
+TheGlobal Leaderthen distributes the request to allDomain
+Leaders(Step 1.②) and simultaneously manages consensus
+within its domain (Step 1.②and Step 1.③in parallel). Once
+the majority of nodes in domain A have the latest data,Global
+Leadersends a confirmation to theDomain Leaderof domain
+B (Step 1.④). After receiving the request from theGlobal
+Leaderto replicate the data, theDomain Leaderwill start
+the consensus in its domain (Step 1.⑤). When the majority of
+nodes in domain B have also synchronized the latest log entries
+and received acknowledgment from theGlobal Leader, the
+Domain Leaderof domain B will directly respond to the client
+and send an acknowledgment to theGlobal Leader(Step 1.⑥).
+TheGlobal Leader, upon receiving this acknowledgment,
+updates itscommit index(when theGlobal Leaderdomain
+completes the consensus operation and receives consensus
+acknowledgment from another domain). Since the client and
+theDomain Leaderof domain B are within the same domain,
+this acknowledgment process is swift and not counted within
+the cross-domain RTT. Steps 1.②and 1.⑤occur simultane-
+ously with Steps 1.③and 1.④, involving the same cross-
+domain network latency and log appending Steps. This design
+ensures that the cross-domain network transmission latency
+of the write operation approximates a single cross-domain
+RTT (equivalent to the duration of Step 1.①and Step 1.②
+
+--- PAGE 4 ---
+combined) while simultaneously guaranteeing data security
+across at least two domains (domains A and B).
+(a) The communication process
+when the client and theGlobal
+Leaderare in different domains.
+(b) The communication process
+when the client and theGlobal
+Leaderare in the same domain.
+Fig. 6: Two communication cases in CD-Raft cross-domain
+sites.
+When the client and theGlobal Leaderare located in
+the same domain (both in domain A), as shown in Fig. 6b,
+the client’s request is sent to theGlobal Leader(Step 2.①).
+Upon receiving the request, theGlobal Leaderdistributes the
+request to allDomain Leaders(Step 2.②) while concurrently
+managing log appending within its domain (Step 2.③). After
+receiving the request, eachDomain Leaderstarts the consensus
+in its domain (Step 2.④). After receiving acknowledgment
+from the other domain (Step 2.⑤) and ensuring that the
+majority of the nodes in its domain hold the new data, the
+Global Leaderresponds to the client (Step 2.⑥). This approach
+guarantees data security across at least two domains. In this
+case, the cross-domain RTT is typically equivalent to the RTT
+between theGlobal Leader’s domain and the nearest other
+domain.
+The read operation of CD-Raft is similar to Raft (see
+Section II-A), when the client’s read request reaches the
+Global Leader, theGlobal Leadersets the value of theread
+indexof the read request to the value of theGlobal Leader’sin-
+domain commit index(only theGlobal Leaderdomain reaches
+consensus log index), and when theapply indexof theGlobal
+Leadercatches up with theread index, it can execute the read
+operation, read the corresponding data from the state machine,
+and respond to the client.
+C. Safety
+CD-Raft’s commit condition is that data can be commit-
+ted once it is held by the majority of nodes in both the
+Global Leader’s domain and another domain. Consequently,
+theGlobal Leaderelection requirements are more stringent.
+To ensure safety, a non-empty intersection must exist between
+the set of nodes participating in leader election and the set of
+nodes involved in subsequent consensus decisions [19].
+Assuming there are N domains, CD-Raft’sGlobal Leader
+election requires at least N-1Domain Leadersto participate
+(a) Failure scenarios for non-
+Global Leader domains.
+(b) Failure scenarios for Global
+Leader domain.
+Fig. 7: CD-Raft fault tolerance in cross-domain failure sites.
+in the election, and the newGlobal Leader’s log must be
+more up-to-date than those of N-2 otherDomain Leaders.
+This stringent requirement ensures that brain-split does not
+occur, even in the event of network partition. ForDomain
+Leaderelection, because data is still required to be held by a
+majority of nodes within the domain, the election still follows
+the majority principle.
+D. Fault Tolerance
+Since node failures and network errors are inevitable, dis-
+tributed systems inevitably face various problems. To ensure
+the normal operation of the system, it is essential to have
+fault tolerance. System failures are mainly divided into two
+categories: node downtime issues and message loss issues. The
+following will provide CD-Raft fault tolerance solutions for
+these two types of failures.
+1)Node Fault Tolerance:As node downtime is inevitable,
+certain failures occur within the system. The node failures that
+CD-Raft can tolerate are as follows.
+•If no more than half of the nodes in the domain containing
+the Global Leader are down, and at least one other domain
+retains over half of its nodes, CD-Raft can continue to
+provide service to clients.
+•Even if more than half of the nodes in the Global Leader’s
+domain are down, CD-Raft can still function as long as
+no more than two domains have more than half of their
+nodes down simultaneously.
+In the first failure scenario, consider a three-domain system,
+as shown in Fig. 7a, where theGlobal Leaderis located
+in domain A. If domain B becomes unavailable (with more
+than half of its nodes down) and the client is located in
+domain B, theGlobal Leadertakes over the role ofDomain
+Leaderin domain B to send an acknowledgment to the client.
+Additionally, theGlobal Leaderensures that a majority of
+nodes in at least one other domain besides it hold the latest
+data. This setup still ensures data security across at least two
+domains. When the client is in domain A or domain C, the
+client request processing flow remains unchanged.
+
+--- PAGE 5 ---
+In the second failure scenario, when more than half of the
+nodes in theGlobal Leader’s domain fail, this results in the
+unavailability of that domain, necessitating a new round of
+Global Leader election. As shown in Fig. 7b, if domain A
+becomes unavailable and the log of theDomain Leaderin
+domain B is newer than domain C, theDomain Leaderof
+domain B takes on the role of the newGlobal Leader. If
+the client is in domain B, CD-Raft processes the read/write
+request as described in the scenario where the client and
+Global Leaderreside in the same domain, requiring a single
+cross-domain RTT (Step 4.②and Step 4.⑤). If the client is in
+domain C, CD-Raft still employs theFast Returnstrategy, with
+theDomain Leaderin domain C sending the acknowledgment
+to the client. If the client is in domain A, this failure case is
+managed as described in the first failure scenario above.
+2)Message Fault Tolerance:Due to the complexity of net-
+work environments, message loss is inevitable. Using Fig. 6a
+as an example, we illustrate CD-Raft’s handling strategy in
+cases of network message loss.
+IfMessage①is lost, the client does not receive a response
+within the expected time, resulting in a request timeout and
+automatic retransmission.
+IfMessage②, where theGlobal Leadercommunicates
+with theDomain Leaderin domain B, is lost, but theGlobal
+Leadercan still communicate with another domain (e.g.,
+domain C), CD-Raft handles the situation according to the
+strategy illustrated in Fig. 7a. When theGlobal Leadercannot
+communicate with any other domain, the client experiences
+a timeout and retransmits the request due to the lack of
+acknowledgment.
+IfMessage③between theGlobal Leaderand more than
+half of the followers in the domain is lost, the client does
+not receive a response, and the request is retransmitted after a
+timeout.
+IfMessage④is lost, CD-Raft is unable to execute the
+Fast Returnstrategy. When theGlobal Leaderreceives an
+acknowledgment from another domain, it performs the commit
+and responds to the client.
+IfMessage⑤between theDomain Leaderand more
+than half of the followers in the domain is lost, domain B
+cannot reach a consensus, preventing theDomain Leaderfrom
+executing theFast Returnstrategy, similar to the scenario of
+node downtime. If otherDomain Leaderscomplete consensus
+on the new request and respond to theGlobal Leader, the
+Global Leaderperforms the commit and responds to the client.
+IfMessage⑥sent by theDomain Leaderof domain B to
+theGlobal Leaderis lost, theDomain Leadercan still respond
+directly to the client, provided that at least two domains have
+the latest data. However, since theGlobal Leaderhas not
+received acknowledgment from domain B, itscommit index
+cannot be updated. TheGlobal Leadercan only perform the
+commit after receiving acknowledgment from another domain.
+If a read request arrives, since theread indexis set to the
+Global Leader’sin-domain commit index, theGlobal Leader
+waits for acknowledgment from the other domain before
+executing the commit. Once the commit is completed and the
+state machine is applied, the read request is executed, and the
+client receives the data.
+E. Optimal Global Leader Position
+Due to varying client request volumes and inter-domain la-
+tencies, the position of theGlobal Leaderimpacts total global
+latency. In order to obtain theGlobal Leaderposition that
+minimizes the total global latency, we need to evaluate total
+global latency based on the client request volume distribution
+and the latency between domains. Table I below summarizes
+the symbols used in the following sections.
+TABLE I: Symbols used in the system performance model.
+Symbols Descriptions
+lij Latency between Domainiand Domainj
+Li Cross-domain latency for read/write operations by clients
+in Domaini
+Wi Number of write requests by clients in Domaini
+Ri Number of read requests by clients in Domaini
+Ls Total global latency in the distributed system
+NNumber of domains
+When the read/write request volume from different domains
+(i.e.,W i andR i) and the inter-domain latency (i.e.,l ij) are
+known, we only need to find a position for theGlobal Leader
+that minimizes the total cross-domain latency, thereby maxi-
+mizing system performance. Assume the cluster is distributed
+acrossNdomains, with theGlobal Leadernode located in
+domainz(z∈[1, N]). The cross-domain latencyL i for client
+requests from domaini(i∈[1, N]) falls into three cases.
+When domainiis available and the client is in the same
+domain as theGlobal Leader(i.e.,i=z), theGlobal Leader,
+upon receiving a write request, forwards the request to all
+Domain Leadersand initiates its own in-domain consensus
+process. As soon as theGlobal Leaderreceives an acknowl-
+edgment from any other domain, it can respond to the client.
+This cross-domain latency is typically the latency between
+theGlobal Leader’s domain and the nearest other domain.
+Since read requests do not involve cross-domain latency,L i
+satisfies the conditions of Equation (1). Letjrepresent another
+available domain.
+Li = 2·min(l zj )·W i (1)
+When domainiis available and the client is in a different
+domain from theGlobal Leader(i.e.,i̸=z), theGlobal
+Leader, upon receiving a write request, forwards the request
+to allDomain Leadersand initiates its in-domain consensus
+process. Once theDomain Leaderin the domain where the
+client resides successfully commits, it can directly respond to
+the client. Therefore, the write request experiences a cross-
+domain RTT. The client’s read request is sent directly to the
+Global Leader, and after reading the data from theGlobal
+Leader, it is immediately returned to the client. This entire
+read process also experiences a cross-domain RTT, which is
+the same as the cross-domain RTT for the write process. Thus,
+Li is as shown in Equation (2).
+Li = 2·l iz ·(W i +R i)(2)
+
+--- LAST PAGE 10 ---
+REFERENCES
+[1] L. Sani, A. Iacobet al., “The future of large language model pre-training
+is federated,”arXiv preprint arXiv:2405.10853, 2024.
+[2] B. F. Cooper, A. Silberstein, E. Tam, R. Ramakrishnan, and R. Sears,
+“Benchmarking cloud serving systems with ycsb,” inProceedings of the
+1st ACM symposium on Cloud computing, 2010, pp. 143–154.
+[3] I. Moraru, D. G. Andersen, and M. Kaminsky, “There is more consensus
+in egalitarian parliaments,” inProceedings of the Twenty-F ourth ACM
+Symposium on Operating Systems Principles, 2013, pp. 358–372.
+[4] L. Lamport, “Paxos made simple,”ACM SIGACT News (Distributed
+Computing Column) 32, 4 (Whole Number 121, December 2001), pp.
+51–58, 2001.
+[5] D. Ongaro and J. Ousterhout, “In search of an understandable consensus
+algorithm,” in2014 USENIX annual technical conference (USENIX ATC
+14), 2014, pp. 305–319.
+[6] D. Ongaro,Consensus: Bridging theory and practice. Stanford
+University, 2014.
+[7] L. Leslie, “The part-time parliament,”ACM Trans. on Computer Systems,
+vol. 16, pp. 133–169, 1998.
+[8] “ETCD,” 2025. [Online]. Available: https://github.com/etcd-io/etcd
+[9] “CockroachDB,” 2025. [Online]. Available: https://github.com/
+cockroachdb/cockroach
+[10] “YugabyteDB,” 2025. [Online]. Available: https://github.com/yugabyte/
+yugabyte-db
+[11] “TiDB,” 2025. [Online]. Available: https://github.com/pingcap/tidb
+[12] “Kudu,” 2025. [Online]. Available: https://kudu.apache.org/.
+[13] “NebulaGraph,” 2025. [Online]. Available: https://github.com/vesoft-inc/
+nebula.
+[14] “Logcabin,” 2025. [Online]. Available: https://github.com/logcabin/
+logcabin.
+[15] “Dragonboat,” 2025. [Online]. Available: https://github.com/lni/
+dragonboat.
+[16] W. Cao, Z. Liu, P. Wang, S. Chen, C. Zhu, S. Zheng, Y . Wang, and
+G. Ma, “Polarfs: an ultra-low latency and failure resilient distributed
+file system for shared storage cloud database,”Proceedings of the VLDB
+Endowment, vol. 11, no. 12, pp. 1849–1862, 2018.
+[17] W. Cao, Y . Zhang, X. Yang, F. Li, S. Wang, Q. Hu, X. Cheng, Z. Chen,
+Z. Liu, J. Fanget al., “Polardb serverless: A cloud native database for
+disaggregated data centers,” inProceedings of the 2021 International
+Conference on Management of Data, 2021, pp. 2477–2489.
+[18] M. P. Herlihy and J. M. Wing, “Linearizability: A correctness condition
+for concurrent objects,”ACM Transactions on Programming Languages
+and Systems (TOPLAS), vol. 12, no. 3, pp. 463–492, 1990.
+[19] H. Howard, D. Malkhi, and A. Spiegelman, “Flexible paxos: Quorum
+intersection revisited,”arXiv preprint arXiv:1608.06696, 2016.
+[20] H. Zhu, Z. Bai, J. Li, E. Michael, D. R. K. Ports, I. Stoica, and X. Jin,
+“Harmonia: near-linear scalability for replicated storage with in-network
+conflict detection,”Proc. VLDB Endow., vol. 13, no. 3, p. 376–389, Nov.
+2019. [Online]. Available: https://doi.org/10.14778/3368289.3368301
+[21] Y . Wang, Z. Wang, Y . Chai, and X. Wang, “Rethink the linearizability
+constraints of raft for distributed systems,”IEEE Transactions on
+Knowledge and Data Engineering, vol. 35, no. 11, pp. 11 815–11 829,
+2023.
+[22] L. Lamport,Specifying systems. Addison-Wesley Boston, 2002, vol.
+388.
+[23] D. Cousineau, D. Doligez, L. Lamport, S. Merz, D. Ricketts, and
+H. Vanzetto, “Tla+ proofs,” inInternational Symposium on F ormal
+Methods. Springer, 2012, pp. 147–154.
+[24] “RocksDB,” 2025. [Online]. Available: http://rocksdb.org/
+[25] “gRPC,” 2025. [Online]. Available: https://grpc.io/
+[26] “protobuf,” Jan. 2025. [Online]. Available: https://github.com/
+protocolbuffers/protobuf
+[27] A. Charapko, A. Ailijiang, and M. Demirbas, “Pigpaxos: Devouring the
+communication bottlenecks in distributed consensus,” inProceedings of
+the 2021 International Conference on Management of Data, 2021, pp.
+235–247.
+[28] Y . Mao, F. P. Junqueira, and K. Marzullo, “Mencius: building efficient
+replicated state machines for wans,” 2008.
+[29] D. Xu, D. Zhang, T. Li, Y . Chai, Z. Sun, W. Li, Y . Liu, Q. Wang, J. Liang,
+Y . Renet al., “Geolm: Performance-oriented leader management for
+geo-distributed consensus protocol,” inIEEE INFOCOM 2025-IEEE
+Conference on Computer Communications. IEEE, 2025, pp. 1–10.
+[30] A. Ailijiang, A. Charapko, M. Demirbas, and T. Kosar, “Wpaxos: Wide
+area network flexible consensus,”IEEE Transactions on Parallel and
+Distributed Systems, vol. 31, no. 1, pp. 211–223, 2019.
+[31] L. Lamport, “Fast paxos,”Distributed Computing, vol. 19, pp. 79–103,
+2006.
+[32] D. R. Ports, J. Li, V . Liu, N. K. Sharma, and A. Krishnamurthy,
+“Designing distributed systems using approximate synchrony in data
+center networks,” in12th USENIX Symposium on Networked Systems
+Design and Implementation (NSDI 15), 2015, pp. 43–57.
+[33] J. Li, E. Michael, N. K. Sharma, A. Szekeres, and D. R. Ports,
+“Just say{NO}to paxos overhead: Replacing consensus with network
+ordering,” in12th USENIX Symposium on Operating Systems Design
+and Implementation (OSDI 16), 2016, pp. 467–483.
+[34] S. J. Park and J. Ousterhout, “Exploiting commutativity for practical fast
+replication,” in16th USENIX Symposium on Networked Systems Design
+and Implementation (NSDI 19), 2019, pp. 47–64.

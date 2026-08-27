@@ -1,0 +1,48 @@
+plugins {
+    id 'application'
+    /*
+    What does the application plugin do?
+
+  It tells Gradle: "This module is a runnable app that can be launched."
+  1. Creates Startup Scripts: When you build your project, this plugin automatically writes a Windows Batch script (.bat) and a Linux shell
+  script. You can run these scripts to start your client without typing long, complex terminal commands.
+  2. Enables the Run Command: It allows you to run your client directly from the command line using:
+    .\.gradle-dist\gradle-8.5\bin\gradle.bat :raft-client:run --args="..."
+    * */
+}
+
+dependencies {
+    implementation project(':raft-rpc')
+    implementation 'io.grpc:grpc-netty-shaded:1.62.2'
+    implementation 'io.grpc:grpc-protobuf:1.62.2'
+    implementation 'io.grpc:grpc-stub:1.62.2'
+}
+/*
+ Here is what each line means:
+
+  • implementation project(':raft-rpc') (Internal dependency):
+      • It tells Gradle: "This client module needs the code inside our own raft-rpc module."
+      • Why? Because the raft-rpc module contains the generated gRPC code (like KVServiceGrpc stubs) that the client needs to send requests.
+  • implementation 'io.grpc:grpc-netty-shaded:1.62.2' (External dependency):
+      • Netty is a high-performance network communication framework. The client needs it to open network connections to the Raft servers. Gradle
+      downloads this automatically from the internet.
+  • implementation 'io.grpc:grpc-protobuf:1.62.2' (External dependency):
+      • Protobuf is how we encode messages into binary before sending them over the network. This library allows the client to convert Java
+      objects into binary and back.
+  • implementation 'io.grpc:grpc-stub:1.62.2' (External dependency):
+      • Provides the client "stub" classes (helper classes) used to invoke remote gRPC methods (like calling .put() or .get()).
+
+* */
+application {
+    //This setting tells Gradle's application plugin: "When the user runs this module, start executing the program at the main method located inside
+    //  the RaftCliClient.java class."
+    mainClass = 'raftkv.client.RaftCliClient'
+}
+
+tasks.register('runSimulator', JavaExec) {
+    group = 'application'
+    description = 'Runs the CD-Raft vs Standard Raft latency simulation'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'raftkv.client.CdRaftSimulator'
+}
+

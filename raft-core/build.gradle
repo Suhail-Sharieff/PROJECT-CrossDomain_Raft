@@ -1,0 +1,4 @@
+// raft-core module build configuration
+dependencies {
+    // Pure Raft logic module. No external runtime dependencies besides SLF4J (inherited).
+}

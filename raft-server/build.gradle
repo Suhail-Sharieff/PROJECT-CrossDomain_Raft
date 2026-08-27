@@ -1,0 +1,17 @@
+plugins {
+    //This tells Gradle that  raft-server  is not just a helper library, but an executable program (it has a  main  method). This
+    //  plugin adds commands like  .\gradlew :raft-server:run  and helps pack the app into a  .zip  file for deployment.
+    id 'application'
+}
+
+dependencies {
+    implementation project(':raft-core')
+    implementation project(':raft-rpc')
+    implementation 'io.grpc:grpc-netty-shaded:1.62.2'
+    implementation 'io.grpc:grpc-protobuf:1.62.2'
+    implementation 'io.grpc:grpc-stub:1.62.2'
+}
+
+application {
+    mainClass = 'raftkv.server.Main'
+}
