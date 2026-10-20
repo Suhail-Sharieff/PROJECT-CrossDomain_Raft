@@ -59,4 +59,10 @@ public class PeerClient {
     public StateResponse getState() {
         return kvBlockingStub.withDeadlineAfter(350, TimeUnit.MILLISECONDS).getState(StateRequest.getDefaultInstance());
     }
+
+    public PutResponse sendPut(String key, String value) {
+        return kvBlockingStub.withDeadlineAfter(3, TimeUnit.SECONDS).put(
+                PutRequest.newBuilder().setKey(key).setValue(value).build()
+        );
+    }
 }

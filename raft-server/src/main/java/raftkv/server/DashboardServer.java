@@ -251,36 +251,40 @@ public class DashboardServer {
                 return;
             }
 
-            try {
-                PutResponse resp = callLocalPut(key, value);
-                sendTextResponse(exchange, 200, "{\"success\":" + resp.getSuccess() + ",\"leaderId\":" + resp.getLeaderId() + "}", "application/json");
-            } catch (Exception e) {
-                sendTextResponse(exchange, 500, "{\"success\":false,\"error\":\"" + escapeJson(e.getMessage()) + "\"}", "application/json");
-            }
+            boolean ok = submitWriteToCluster(key, value);
+            int leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
+            sendTextResponse(exchange, ok ? 200 : 503, "{\"success\":" + ok + ",\"leaderId\":" + leaderId + "}", "application/json");
         }
 
-        private PutResponse callLocalPut(String key, String value) {
-            if (mainServer.isOffline()) {
-                throw new RuntimeException("Node is offline");
-            }
-            CompletableFuture<PutResponse> future = new CompletableFuture<>();
-            mainServer.getKvService().put(
-                    PutRequest.newBuilder().setKey(key).setValue(value).build(),
-                    new io.grpc.stub.StreamObserver<>() {
-                        @Override
-                        public void onNext(PutResponse value) { future.complete(value); }
-                        @Override
-                        public void onError(Throwable t) { future.completeExceptionally(t); }
-                        @Override
-                        public void onCompleted() {}
-                    }
-            );
-            try {
-                return future.get(5, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                throw new RuntimeException("Write failed or timed out", e);
-            }
+    }
+
+    private boolean submitWriteToCluster(String key, String value) {
+        if (mainServer.isOffline()) return false;
+
+        if (mainServer.getRaftNode() != null && mainServer.getRaftNode().getRole() == NodeState.LEADER) {
+            long idx = mainServer.getRaftNode().clientWrite("PUT " + key + " " + value);
+            if (idx != -1) return true;
         }
+
+        int leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
+        if (leaderId > 0 && mainServer.getPeers().containsKey(leaderId)) {
+            try {
+                PutResponse resp = mainServer.getPeers().get(leaderId).sendPut(key, value);
+                if (resp.getSuccess()) return true;
+            } catch (Exception ignored) {}
+        }
+
+        for (Map.Entry<Integer, PeerClient> entry : mainServer.getPeers().entrySet()) {
+            try {
+                PutResponse resp = entry.getValue().sendPut(key, value);
+                if (resp.getSuccess()) return true;
+                if (resp.getLeaderId() > 0 && mainServer.getPeers().containsKey(resp.getLeaderId())) {
+                    PutResponse lResp = mainServer.getPeers().get(resp.getLeaderId()).sendPut(key, value);
+                    if (lResp.getSuccess()) return true;
+                }
+            } catch (Exception ignored) {}
+        }
+        return false;
     }
 
     private class GetHandler implements HttpHandler {
@@ -312,34 +316,33 @@ public class DashboardServer {
             if (type.equalsIgnoreCase("cd")) {
                 json.append("\"totalLatency\":106,");
                 json.append("\"steps\":[");
-                json.append("{\"from\":\"client\",\"to\":\"node-1\",\"start\":0,\"end\":50,\"label\":\"Client Write to Global Leader (Node 1)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-2\",\"start\":50,\"end\":52,\"label\":\"GL local replication to Node 2 (In-Domain)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-3\",\"start\":50,\"end\":100,\"label\":\"GL broadcast to Domain Leader Node 3 (Cross-Domain)\"},");
-                json.append("{\"from\":\"node-3\",\"to\":\"node-4\",\"start\":100,\"end\":102,\"label\":\"DL local replication to Node 4 (In-Domain)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-3\",\"start\":54,\"end\":104,\"label\":\"GL quorum reached, send confirmation (Cross-Domain)\"},");
-                json.append("{\"from\":\"node-3\",\"to\":\"client\",\"start\":104,\"end\":106,\"label\":\"Fast Return Response from local DL Node 3\"}");
+                json.append("{\"from\":\"client\",\"to\":\"node-1\",\"start\":0,\"end\":50,\"label\":\"Client in London sends write to Global Leader (Node 1 in Virginia)\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-2\",\"start\":50,\"end\":52,\"label\":\"GL replicates to Node 2 (In-Domain LAN, 2ms)\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-3\",\"start\":50,\"end\":52,\"label\":\"GL replicates to Node 3 (In-Domain LAN, 2ms) -> Domain A Quorum (2/3) Met!\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-4\",\"start\":50,\"end\":100,\"label\":\"GL dispatches batch to Domain Leader Node 4 (WAN 50ms)\"},");
+                json.append("{\"from\":\"node-4\",\"to\":\"node-5\",\"start\":100,\"end\":102,\"label\":\"DL Node 4 replicates to Node 5 (In-Domain LAN, 2ms)\"},");
+                json.append("{\"from\":\"node-4\",\"to\":\"node-6\",\"start\":100,\"end\":102,\"label\":\"DL Node 4 replicates to Node 6 (In-Domain LAN, 2ms) -> Domain B Quorum (2/3) Met!\"},");
+                json.append("{\"from\":\"node-4\",\"to\":\"client\",\"start\":104,\"end\":106,\"label\":\"Fast Return: DL Node 4 responds directly to local client (2ms)!\"}");
                 json.append("]");
             } else {
                 json.append("\"totalLatency\":200,");
                 json.append("\"steps\":[");
-                json.append("{\"from\":\"client\",\"to\":\"node-1\",\"start\":0,\"end\":50,\"label\":\"Client Write to Leader (Node 1)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-2\",\"start\":50,\"end\":52,\"label\":\"Replication to Node 2 (In-Domain)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-3\",\"start\":50,\"end\":100,\"label\":\"Replication to Node 3 (Cross-Domain)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-4\",\"start\":50,\"end\":100,\"label\":\"Replication to Node 4 (Cross-Domain)\"},");
-                json.append("{\"from\":\"node-3\",\"to\":\"node-1\",\"start\":100,\"end\":150,\"label\":\"Node 3 replication success reply (Cross-Domain)\"},");
-                json.append("{\"from\":\"node-4\",\"to\":\"node-1\",\"start\":100,\"end\":150,\"label\":\"Node 4 replication success reply (Cross-Domain)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"client\",\"start\":150,\"end\":200,\"label\":\"Leader commits and replies to Client\"}");
+                json.append("{\"from\":\"client\",\"to\":\"node-1\",\"start\":0,\"end\":50,\"label\":\"Client in London sends write to Leader Node 1 (WAN 50ms)\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-2\",\"start\":50,\"end\":52,\"label\":\"Leader replicates to Node 2 (In-Domain)\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-3\",\"start\":50,\"end\":52,\"label\":\"Leader replicates to Node 3 (In-Domain, 3/6 nodes - Need 4 for Quorum!)\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-4\",\"start\":50,\"end\":100,\"label\":\"Leader replicates to Node 4 (WAN 50ms)\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-5\",\"start\":50,\"end\":100,\"label\":\"Leader replicates to Node 5 (WAN 50ms)\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"node-6\",\"start\":50,\"end\":100,\"label\":\"Leader replicates to Node 6 (WAN 50ms)\"},");
+                json.append("{\"from\":\"node-4\",\"to\":\"node-1\",\"start\":100,\"end\":150,\"label\":\"Node 4 ACK returns to Virginia (WAN 50ms) -> 4/6 Global Quorum Met!\"},");
+                json.append("{\"from\":\"node-1\",\"to\":\"client\",\"start\":150,\"end\":200,\"label\":\"Leader commits and replies from Virginia back to London (WAN 50ms)\"}");
                 json.append("]");
             }
             json.append("}");
 
-            // Apply write asynchronously to actual cluster
+            // Dispatch consensus write through the cluster leader!
             CompletableFuture.runAsync(() -> {
                 try {
-                    mainServer.getKvStore().put(key, value);
-                    if (mainServer.getRaftNode() != null && mainServer.getRaftNode().getRole() == NodeState.LEADER) {
-                        mainServer.getRaftNode().clientWrite("PUT " + key + " " + value);
-                    }
+                    submitWriteToCluster(key, value);
                 } catch (Exception e) {
                     logger.debug("Background simulation write error", e);
                 }

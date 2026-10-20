@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # --- DOMAIN A (VIRGINIA) ---
   node-1:
     build:
       context: ..
@@ -12,9 +13,9 @@ services:
     environment:
       - NODE_ID=1
       - NODE_PORT=8001
-      - PEERS=2=node-2:8001,3=node-3:8001
-      - ELECTION_TIMEOUT_MIN_MS=300
-      - ELECTION_TIMEOUT_MAX_MS=600
+      - PEERS=2=node-2:8001,3=node-3:8001,4=node-4:8001,5=node-5:8001,6=node-6:8001
+      - ELECTION_TIMEOUT_MIN_MS=150
+      - ELECTION_TIMEOUT_MAX_MS=280
       - HEARTBEAT_INTERVAL_MS=50
       - DATA_DIR=/app/data
     volumes:
@@ -31,9 +32,9 @@ services:
     environment:
       - NODE_ID=2
       - NODE_PORT=8001
-      - PEERS=1=node-1:8001,3=node-3:8001
-      - ELECTION_TIMEOUT_MIN_MS=300
-      - ELECTION_TIMEOUT_MAX_MS=600
+      - PEERS=1=node-1:8001,3=node-3:8001,4=node-4:8001,5=node-5:8001,6=node-6:8001
+      - ELECTION_TIMEOUT_MIN_MS=400
+      - ELECTION_TIMEOUT_MAX_MS=750
       - HEARTBEAT_INTERVAL_MS=50
       - DATA_DIR=/app/data
     volumes:
@@ -43,22 +44,83 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    container_name: node-3
     ports:
       - "8003:8001"
       - "9003:9001"
-    container_name: node-3
     environment:
       - NODE_ID=3
       - NODE_PORT=8001
-      - PEERS=1=node-1:8001,2=node-2:8001
-      - ELECTION_TIMEOUT_MIN_MS=300
-      - ELECTION_TIMEOUT_MAX_MS=600
+      - PEERS=1=node-1:8001,2=node-2:8001,4=node-4:8001,5=node-5:8001,6=node-6:8001
+      - ELECTION_TIMEOUT_MIN_MS=400
+      - ELECTION_TIMEOUT_MAX_MS=750
       - HEARTBEAT_INTERVAL_MS=50
       - DATA_DIR=/app/data
     volumes:
       - node-3-data:/app/data
 
+  # --- DOMAIN B (LONDON) ---
+  node-4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: node-4
+    ports:
+      - "8004:8001"
+      - "9004:9001"
+    environment:
+      - NODE_ID=4
+      - NODE_PORT=8001
+      - PEERS=1=node-1:8001,2=node-2:8001,3=node-3:8001,5=node-5:8001,6=node-6:8001
+      - ELECTION_TIMEOUT_MIN_MS=400
+      - ELECTION_TIMEOUT_MAX_MS=750
+      - HEARTBEAT_INTERVAL_MS=50
+      - DATA_DIR=/app/data
+    volumes:
+      - node-4-data:/app/data
+
+  node-5:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: node-5
+    ports:
+      - "8005:8001"
+      - "9005:9001"
+    environment:
+      - NODE_ID=5
+      - NODE_PORT=8001
+      - PEERS=1=node-1:8001,2=node-2:8001,3=node-3:8001,4=node-4:8001,6=node-6:8001
+      - ELECTION_TIMEOUT_MIN_MS=400
+      - ELECTION_TIMEOUT_MAX_MS=750
+      - HEARTBEAT_INTERVAL_MS=50
+      - DATA_DIR=/app/data
+    volumes:
+      - node-5-data:/app/data
+
+  node-6:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: node-6
+    ports:
+      - "8006:8001"
+      - "9006:9001"
+    environment:
+      - NODE_ID=6
+      - NODE_PORT=8001
+      - PEERS=1=node-1:8001,2=node-2:8001,3=node-3:8001,4=node-4:8001,5=node-5:8001
+      - ELECTION_TIMEOUT_MIN_MS=400
+      - ELECTION_TIMEOUT_MAX_MS=750
+      - HEARTBEAT_INTERVAL_MS=50
+      - DATA_DIR=/app/data
+    volumes:
+      - node-6-data:/app/data
+
 volumes:
   node-1-data:
   node-2-data:
   node-3-data:
+  node-4-data:
+  node-5-data:
+  node-6-data:
