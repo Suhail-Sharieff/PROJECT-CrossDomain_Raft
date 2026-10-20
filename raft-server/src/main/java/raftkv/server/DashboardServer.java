@@ -258,12 +258,36 @@ public class DashboardServer {
 
     }
 
+    private PutResponse callLocalPut(String key, String value) {
+        if (mainServer.isOffline()) {
+            return PutResponse.newBuilder().setSuccess(false).setLeaderId(-1).build();
+        }
+        CompletableFuture<PutResponse> future = new CompletableFuture<>();
+        mainServer.getKvService().put(
+                PutRequest.newBuilder().setKey(key).setValue(value).build(),
+                new io.grpc.stub.StreamObserver<>() {
+                    @Override
+                    public void onNext(PutResponse value) { future.complete(value); }
+                    @Override
+                    public void onError(Throwable t) { future.completeExceptionally(t); }
+                    @Override
+                    public void onCompleted() {}
+                }
+        );
+        try {
+            return future.get(2500, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            int leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
+            return PutResponse.newBuilder().setSuccess(false).setLeaderId(leaderId).build();
+        }
+    }
+
     private boolean submitWriteToCluster(String key, String value) {
         if (mainServer.isOffline()) return false;
 
         if (mainServer.getRaftNode() != null && mainServer.getRaftNode().getRole() == NodeState.LEADER) {
-            long idx = mainServer.getRaftNode().clientWrite("PUT " + key + " " + value);
-            if (idx != -1) return true;
+            PutResponse resp = callLocalPut(key, value);
+            return resp.getSuccess();
         }
 
         int leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
@@ -307,8 +331,38 @@ public class DashboardServer {
             String key = params.getOrDefault("key", "testKey");
             String value = params.getOrDefault("value", "testValue");
 
+            // Only CD-Raft submits a real write; standard type simulates success
+            // based on live leader presence to avoid two simultaneous Raft writes racing.
+            boolean writeSuccess;
+            if (type.equalsIgnoreCase("cd")) {
+                writeSuccess = submitWriteToCluster(key, value);
+            } else {
+                // Standard: succeed if cluster has a live leader (quorum met)
+                writeSuccess = mainServer.getRaftNode() != null
+                        && mainServer.getRaftNode().getRole() == NodeState.LEADER
+                        && !mainServer.isOffline();
+                if (!writeSuccess) {
+                    for (Map.Entry<Integer, PeerClient> entry : mainServer.getPeers().entrySet()) {
+                        try {
+                            raftkv.rpc.proto.StateResponse sr = entry.getValue().getState();
+                            if ("LEADER".equals(sr.getRole()) && !sr.getIsOffline()) {
+                                writeSuccess = true;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+            int leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
+            long commitIdx = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getCommitIndex() : 0;
+            long term = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getCurrentTerm() : 0;
+
             StringBuilder json = new StringBuilder();
             json.append("{");
+            json.append("\"success\":").append(writeSuccess).append(",");
+            json.append("\"leaderId\":").append(leaderId).append(",");
+            json.append("\"commitIndex\":").append(commitIdx).append(",");
+            json.append("\"term\":").append(term).append(",");
             json.append("\"type\":\"").append(type).append("\",");
             json.append("\"key\":\"").append(escapeJson(key)).append("\",");
             json.append("\"value\":\"").append(escapeJson(value)).append("\",");
@@ -339,14 +393,7 @@ public class DashboardServer {
             }
             json.append("}");
 
-            // Dispatch consensus write through the cluster leader!
-            CompletableFuture.runAsync(() -> {
-                try {
-                    submitWriteToCluster(key, value);
-                } catch (Exception e) {
-                    logger.debug("Background simulation write error", e);
-                }
-            });
+
 
             sendTextResponse(exchange, 200, json.toString(), "application/json");
         }
