@@ -28,3 +28,7 @@ bin/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Node dependencies
+node_modules/
+**/node_modules/

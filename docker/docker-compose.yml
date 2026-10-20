@@ -5,9 +5,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: node-1 # if we dont put this, docker assigns name as docker-node-1-1(this number is ith instance of node-1) 1  (Instance Number): Because Docker Compose supports scaling services (e.g. running 5 copies of  node-1  via  docker compose up --scale node-1=5 ), it appends  -1  for the first replica,  -2  for the second, and so on.
+    container_name: node-1
     ports:
       - "8001:8001"
+      - "9001:9001"
     environment:
       - NODE_ID=1
       - NODE_PORT=8001
@@ -26,6 +27,7 @@ services:
     container_name: node-2
     ports:
       - "8002:8001"
+      - "9002:9001"
     environment:
       - NODE_ID=2
       - NODE_PORT=8001
@@ -43,6 +45,7 @@ services:
       dockerfile: docker/Dockerfile
     ports:
       - "8003:8001"
+      - "9003:9001"
     container_name: node-3
     environment:
       - NODE_ID=3

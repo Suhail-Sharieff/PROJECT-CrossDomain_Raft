@@ -31,6 +31,7 @@ public class RaftNode {
     private NodeState role = NodeState.FOLLOWER;
     private int leaderId = -1;
     private final Set<Integer> votesReceived = new ConcurrentHashSet<>();
+    private volatile boolean isOffline = false;
 
     // Timers & Schedulers
     private final ScheduledExecutorService scheduler;
@@ -85,6 +86,7 @@ public class RaftNode {
     }
 
     public void start() {
+        if (isOffline) return;
         lock.lock();
         try {
             logger.info("Starting node {} in state {}", nodeId, role);
@@ -108,6 +110,7 @@ public class RaftNode {
     // --- Core Timer Handlers ---
 
     private void onElectionTimeout() {
+        if (isOffline) return;
         lock.lock();
         try {
             if (role == NodeState.LEADER) {
@@ -505,6 +508,19 @@ public class RaftNode {
             return votedFor;
         } finally {
             lock.unlock();
+        }
+    }
+
+    public boolean isOffline() {
+        return isOffline;
+    }
+
+    public void setOffline(boolean offline) {
+        this.isOffline = offline;
+        if (offline) {
+            stop();
+        } else {
+            start();
         }
     }
 

@@ -1,7 +1,6 @@
 package raftkv.server;
 
-import io.grpc.Server;
-import io.grpc.ServerBuilder;
+import io.grpc.*;
 import io.grpc.stub.StreamObserver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +33,8 @@ public class Main {
     private RaftNode raftNode;
     private KVServiceImpl kvService;
     private Server grpcServer;
+    private DashboardServer dashboardServer;
+    private volatile boolean offline = false;
 
     public Main(ClusterConfig config) {
         this.config = config;
@@ -59,6 +60,7 @@ public class Main {
         RaftNodeListener listener = new RaftNodeListener() {
             @Override
             public void sendRequestVote(int peerId, long term, int candidateId, long lastLogIndex, long lastLogTerm) {
+                if (offline) return;
                 PeerClient peer = peers.get(peerId);
                 if (peer == null) return;
 
@@ -87,6 +89,7 @@ public class Main {
 
             @Override
             public void sendAppendEntries(int peerId, long term, int leaderId, long prevLogIndex, long prevLogTerm, List<LogEntry> entries, long leaderCommit) {
+                if (offline) return;
                 PeerClient peer = peers.get(peerId);
                 if (peer == null) return;
 
@@ -99,8 +102,8 @@ public class Main {
 
                 for (LogEntry entry : entries) {
                     builder.addEntries(LogEntryProto.newBuilder()
-                            .setTerm(entry.term())
                             .setIndex(entry.index())
+                            .setTerm(entry.term())
                             .setCommand(entry.command())
                             .build());
                 }
@@ -124,28 +127,26 @@ public class Main {
             }
 
             @Override
-            public void onCommit(long logIndex, LogEntry entry) {
-                String command = entry.command();
-                logger.info("Committed entry at index {}: '{}'", logIndex, command);
-                if (command.startsWith("PUT ")) {
-                    String[] parts = command.split(" ", 3);
-                    if (parts.length == 3) {
-                        String key = parts[1];
-                        String value = parts[2];
-                        kvStore.put(key, value);
-                        logger.info("Applied PUT command to state machine: {} -> {}", key, value);
-                    }
-                }
-                if (kvService != null) {
-                    kvService.notifyCommit(logIndex, true);
+            public void onStateChange(NodeState oldState, NodeState newState, long term) {
+                logger.info("State transition: {} -> {} (term {})", oldState, newState, term);
+                if (newState != NodeState.LEADER && kvService != null) {
+                    kvService.abortAllPendingWrites();
                 }
             }
 
             @Override
-            public void onStateChange(NodeState oldState, NodeState newState, long term) {
-                logger.info("State transition: {} -> {} in term {}", oldState, newState, term);
-                if (newState != NodeState.LEADER && kvService != null) {
-                    kvService.abortAllPendingWrites();
+            public void onCommit(long index, LogEntry entry) {
+                logger.info("Applying committed entry at index {}: {}", index, entry.command());
+                String cmd = entry.command();
+                if (cmd != null && cmd.startsWith("PUT ")) {
+                    String[] parts = cmd.split(" ", 3);
+                    if (parts.length >= 3) {
+                        kvStore.put(parts[1], parts[2]);
+                        logger.info("Applied to state machine: {} = {}", parts[1], parts[2]);
+                    }
+                }
+                if (kvService != null) {
+                    kvService.notifyCommit(index, true);
                 }
             }
         };
@@ -165,6 +166,19 @@ public class Main {
         RaftServiceImpl raftService = new RaftServiceImpl(raftNode);
 
         grpcServer = ServerBuilder.forPort(config.getPort())
+                .intercept(new ServerInterceptor() {
+                    @Override
+                    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                            ServerCall<ReqT, RespT> call,
+                            Metadata headers,
+                            ServerCallHandler<ReqT, RespT> next) {
+                        if (offline) {
+                            call.close(Status.UNAVAILABLE.withDescription("simulated crash"), new Metadata());
+                            return new ServerCall.Listener<>() {};
+                        }
+                        return next.startCall(call, headers);
+                    }
+                })
                 .addService(kvService)
                 .addService(raftService)
                 .build()
@@ -172,11 +186,17 @@ public class Main {
 
         logger.info("gRPC server started on port {}", config.getPort());
 
+        dashboardServer = new DashboardServer(this, config.getPort());
+        dashboardServer.start();
+
         raftNode.start();
     }
 
     public void stop() {
         logger.info("Shutting down Raft server...");
+        if (dashboardServer != null) {
+            dashboardServer.stop();
+        }
         if (raftNode != null) {
             raftNode.stop();
         }
@@ -193,6 +213,38 @@ public class Main {
         }
         scheduler.shutdownNow();
         logger.info("Shutdown completed.");
+    }
+
+    public ClusterConfig getConfig() {
+        return config;
+    }
+
+    public RaftNode getRaftNode() {
+        return raftNode;
+    }
+
+    public Map<String, String> getKvStore() {
+        return kvStore;
+    }
+
+    public Map<Integer, PeerClient> getPeers() {
+        return peers;
+    }
+
+    public KVServiceImpl getKvService() {
+        return kvService;
+    }
+
+    public boolean isOffline() {
+        return offline;
+    }
+
+    public void setOffline(boolean offline) {
+        this.offline = offline;
+        if (raftNode != null) {
+            raftNode.setOffline(offline);
+        }
+        logger.info("Node {} simulated {}", config.getNodeId(), offline ? "CRASH" : "REVIVE");
     }
 
     public static void main(String[] args) {

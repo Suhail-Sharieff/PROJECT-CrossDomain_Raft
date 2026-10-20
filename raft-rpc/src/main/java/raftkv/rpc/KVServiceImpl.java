@@ -69,6 +69,34 @@ public class KVServiceImpl extends KVServiceGrpc.KVServiceImplBase {
     }
 
     @Override
+    public void getState(StateRequest request, StreamObserver<StateResponse> responseObserver) {
+        StateResponse.Builder builder = StateResponse.newBuilder()
+                .setNodeId(raftNode.getNodeId())
+                .setRole(raftNode.getRole().name())
+                .setCurrentTerm(raftNode.getCurrentTerm())
+                .setLeaderId(raftNode.getLeaderId())
+                .setCommitIndex(raftNode.getCommitIndex())
+                .setLastApplied(raftNode.getLastApplied())
+                .putAllDatabase(kvStore)
+                .setIsOffline(raftNode.isOffline());
+
+        long lastLogIndex = raftNode.getLog().getLastLogIndex();
+        for (long i = 1; i <= lastLogIndex; i++) {
+            raftkv.core.LogEntry entry = raftNode.getLog().getEntryAt(i);
+            if (entry != null) {
+                builder.addLogEntries(LogEntryProto.newBuilder()
+                        .setIndex(entry.index())
+                        .setTerm(entry.term())
+                        .setCommand(entry.command())
+                        .build());
+            }
+        }
+
+        responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
     public void get(GetRequest request, StreamObserver<GetResponse> responseObserver) {
         String value = kvStore.getOrDefault(request.getKey(), "");
         responseObserver.onNext(GetResponse.newBuilder()

@@ -16,6 +16,7 @@ public class PeerClient {
     private final String address;
     private final ManagedChannel channel;
     private final RaftServiceGrpc.RaftServiceStub asyncStub;
+    private final KVServiceGrpc.KVServiceBlockingStub kvBlockingStub;
 
     public PeerClient(int peerId, String address) {
         this.peerId = peerId;
@@ -27,6 +28,7 @@ public class PeerClient {
                 .usePlaintext()
                 .build();
         this.asyncStub = RaftServiceGrpc.newStub(channel);
+        this.kvBlockingStub = KVServiceGrpc.newBlockingStub(channel);
     }
 
     public void shutdown() {
@@ -52,5 +54,9 @@ public class PeerClient {
 
     public void sendAppendEntries(AppendEntriesRequest request, StreamObserver<AppendEntriesResponse> responseObserver) {
         asyncStub.withDeadlineAfter(500, TimeUnit.MILLISECONDS).appendEntries(request, responseObserver);
+    }
+
+    public StateResponse getState() {
+        return kvBlockingStub.withDeadlineAfter(350, TimeUnit.MILLISECONDS).getState(StateRequest.getDefaultInstance());
     }
 }
