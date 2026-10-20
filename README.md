@@ -1,8 +1,9 @@
-<img src="logo.png" alt="CD-Raft logo" width="160">
+<p align="center">
+  <img src="./logo.png" alt="CD-Raft logo" width="160"/>
+</p>
 
-# Cross-Domain Raft (CD-Raft)
-
-An educational Java prototype of **CD-Raft**, a Raft variant designed to cut consensus latency across geographically separated data centers (cross-domain sites). This repository implements a working **classic Raft** replicated key-value cluster, a **6-node Docker demo**, a **live React dashboard**, and a **latency simulator** that visualizes how CD-Raft’s Fast Return strategy reduces write latency from ~2 WAN round-trips to ~1.
+<h1 align="center">Cross-Domain Raft (CD-Raft)</h1>
+ An Java prototype of **CD-Raft**, a Raft variant designed to cut consensus latency across geographically separated data centers (cross-domain sites). This repository implements a working **classic Raft** replicated key-value cluster, a **6-node Docker demo**, a **live React dashboard**, and a **latency simulator** that visualizes how CD-Raft’s Fast Return strategy reduces write latency from ~2 WAN round-trips to ~1.
 
 The protocol ideas follow:
 
@@ -10,6 +11,8 @@ The protocol ideas follow:
 - Ongaro & Ousterhout — *In Search of an Understandable Consensus Algorithm* (Raft, USENIX ATC 2014)
 
 ---
+
+
 
 ## What this project does
 
@@ -23,10 +26,12 @@ When the client and the leader sit in different regions (for example London vs V
 
 **CD-Raft** organizes nodes into **domains** (sites / data centers) and uses two leader roles:
 
-| Role | Scope | Job |
-| --- | --- | --- |
-| **Domain Leader (DL)** | One per domain | Local Raft-style majority inside the site |
-| **Global Leader (GL)** | One DL chosen among DLs | Coordinates cross-domain consensus |
+
+| Role                   | Scope                   | Job                                       |
+| ---------------------- | ----------------------- | ----------------------------------------- |
+| **Domain Leader (DL)** | One per domain          | Local Raft-style majority inside the site |
+| **Global Leader (GL)** | One DL chosen among DLs | Coordinates cross-domain consensus        |
+
 
 **Fast Return** lets the Domain Leader in the *client’s* domain reply locally once:
 
@@ -38,6 +43,8 @@ The client no longer waits for the GL’s reply to travel back across the ocean.
 This repo is a **teaching and demo system**, not a production CD-Raft engine. The Java cluster runs **standard Raft** (one leader, cluster-wide majority). The dashboard and `CdRaftSimulator` **model** dual-leader topology, Fast Return timing, and domain quorums so you can explain and compare the two protocols.
 
 ---
+
+
 
 ## Why it matters
 
@@ -52,6 +59,8 @@ The paper reports (YCSB-style evaluation vs classic Raft):
 The authors formally specified CD-Raft in **TLA+** / TLAPS to argue linearizability and split-brain safety. That specification is external ([CD-Raft-TLA](https://github.com/Czq0001/CD-Raft-TLA.git)); this repo does not include the TLA+ proofs.
 
 ---
+
+
 
 ## Applications and use cases
 
@@ -76,6 +85,8 @@ CD-Raft (and this prototype as a lab for it) is aimed at **strongly consistent s
 
 ---
 
+
+
 ## Repository layout
 
 Gradle multi-module project (`raft-kv-java`), Java 21, plus a Vite/React UI.
@@ -93,17 +104,23 @@ PROJECT-CrossDomain_Raft/
 └── run.md                Short demo script
 ```
 
-| Module | Responsibility |
-| --- | --- |
-| **raft-core** | `RaftNode` state machine (FOLLOWER / CANDIDATE / LEADER), randomized election timeout, heartbeats, log matching, majority commit of **current-term** entries, `PersistentState` (`metadata.state` + `raft.log`) |
-| **raft-rpc** | `raft.proto`: `RequestVote`, `AppendEntries`, `Put`, `Get`, `GetState` |
-| **raft-server** | Loads `NODE_ID`, `PEERS`, timeouts from the environment; gRPC on `NODE_PORT`; HTTP dashboard on `NODE_PORT + 1000`; in-memory KV applied from committed log; simulated crash (`offline`) |
-| **raft-client** | Blocking gRPC CLI with leader redirect; `CdRaftSimulator` delay model |
-| **raft-dashboard-ui** | Polls `/api/state`, animates packet traces, crash buttons, domain quorum health |
+
+| Module                | Responsibility                                                                                                                                                                                                  |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **raft-core**         | `RaftNode` state machine (FOLLOWER / CANDIDATE / LEADER), randomized election timeout, heartbeats, log matching, majority commit of **current-term** entries, `PersistentState` (`metadata.state` + `raft.log`) |
+| **raft-rpc**          | `raft.proto`: `RequestVote`, `AppendEntries`, `Put`, `Get`, `GetState`                                                                                                                                          |
+| **raft-server**       | Loads `NODE_ID`, `PEERS`, timeouts from the environment; gRPC on `NODE_PORT`; HTTP dashboard on `NODE_PORT + 1000`; in-memory KV applied from committed log; simulated crash (`offline`)                        |
+| **raft-client**       | Blocking gRPC CLI with leader redirect; `CdRaftSimulator` delay model                                                                                                                                           |
+| **raft-dashboard-ui** | Polls `/api/state`, animates packet traces, crash buttons, domain quorum health                                                                                                                                 |
+
 
 ---
 
+
+
 ## System design
+
+
 
 ### 1. Classic Raft path (what the Java nodes actually run)
 
@@ -151,10 +168,12 @@ Client (Domain B)  --½ WAN RTT-->  Global Leader (Domain A)
 
 Docker Compose starts **6 nodes**, presented as two sites:
 
-| Domain | Nodes | Demo location |
-| --- | --- | --- |
-| A | 1, 2, 3 | Virginia |
-| B | 4, 5, 6 | London |
+
+| Domain | Nodes   | Demo location |
+| ------ | ------- | ------------- |
+| A      | 1, 2, 3 | Virginia      |
+| B      | 4, 5, 6 | London        |
+
 
 Node 1 uses a **shorter election timeout** so it usually becomes leader first (useful for a stable demo). Other nodes use 400–750 ms timeouts. Heartbeats are 50 ms.
 
@@ -163,7 +182,7 @@ Each container:
 - gRPC: port `8001` inside the network (host `8001`–`8006`)
 - HTTP dashboard: `9001` inside (`NODE_PORT + 1000`); host `9001`–`9006`
 
-Open **http://localhost:9001** for the UI served by node 1.
+Open **[http://localhost:9001](http://localhost:9001)** for the UI served by node 1.
 
 ### 4. Dashboard and “consensus race”
 
@@ -180,10 +199,12 @@ Animation uses a 16× slowdown so 100 ms WAN hops are visible. Domain Leader lab
 
 `raft-client` `CdRaftSimulator` (and the dashboard traces) assume:
 
-| Hop | One-way | RTT |
-| --- | --- | --- |
-| Intra-domain LAN | 2 ms | 4 ms |
-| Cross-domain WAN | 50 ms | 100 ms |
+
+| Hop              | One-way | RTT    |
+| ---------------- | ------- | ------ |
+| Intra-domain LAN | 2 ms    | 4 ms   |
+| Cross-domain WAN | 50 ms   | 100 ms |
+
 
 Approximate client-visible write times (client in Domain B, leader/GL in Domain A):
 
@@ -211,6 +232,8 @@ These numbers are **injected delays**, not measured transatlantic pings. Compose
 
 ---
 
+
+
 ## How to run
 
 **Requirements:** Docker (recommended), or JDK 21 + Gradle wrapper. For UI hot reload: Node.js.
@@ -223,7 +246,7 @@ From the repo root:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Then open http://localhost:9001
+Then open [http://localhost:9001](http://localhost:9001)
 
 Suggested walkthrough:
 
@@ -231,6 +254,8 @@ Suggested walkthrough:
 2. Identify the live leader (usually Node 1) as GL in the CD-Raft view, and a Domain B node as DL.
 3. Click **Run 6-Node Consensus Race** — CD-Raft animation finishes ~106 ms; classic Raft ~200 ms. The CD path is the real cluster write.
 4. **Simulate Crash** on the leader; wait for a new term/leader; retry a write.
+
+
 
 ### Option B — React UI with hot reload
 
@@ -242,7 +267,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 (Vite proxies `/api` to `http://localhost:9001`).
+Open [http://localhost:3000](http://localhost:3000) (Vite proxies `/api` to `http://localhost:9001`).
 
 ### Option C — Gradle (local processes)
 
@@ -271,29 +296,35 @@ Embedded UI: build `raft-dashboard-ui` (`npm run build`) and copy `dist/` into `
 
 ---
 
+
+
 ## What is implemented vs what is visualized
 
-| Capability | In this repo |
-| --- | --- |
-| Classic Raft election, log replication, majority commit | **Yes** (`raft-core`) |
-| Durable term / vote / log | **Yes** (file-backed `PersistentState`) |
-| Replicated KV `Put` applied on commit | **Yes** |
-| gRPC cluster + leader redirect CLI | **Yes** |
-| 6-node Docker demo + crash toggle | **Yes** |
-| Live dashboard (roles, logs, KV, quorum bars) | **Yes** |
-| Packet animation + 106 ms vs 200 ms race | **Yes** (scripted traces + real CD-path write) |
-| Timing simulator for Fast Return | **Yes** (`CdRaftSimulator`) |
-| Real Domain Leader / Global Leader state machines | **No** — UI labels only |
-| Fast Return on the gRPC write path | **No** — client still waits for the Raft leader |
-| Two-domain commit rule in `RaftNode` | **No** — majority of **all 6** nodes |
-| WAN delay gRPC interceptor | **No** |
-| Optimal GL placement | **No** |
-| Linearizable `Get` (read index / lease) | **No** — local map read |
-| TLA+ model / YCSB | **Not in this repo** (paper / upstream) |
+
+| Capability                                              | In this repo                                    |
+| ------------------------------------------------------- | ----------------------------------------------- |
+| Classic Raft election, log replication, majority commit | **Yes** (`raft-core`)                           |
+| Durable term / vote / log                               | **Yes** (file-backed `PersistentState`)         |
+| Replicated KV `Put` applied on commit                   | **Yes**                                         |
+| gRPC cluster + leader redirect CLI                      | **Yes**                                         |
+| 6-node Docker demo + crash toggle                       | **Yes**                                         |
+| Live dashboard (roles, logs, KV, quorum bars)           | **Yes**                                         |
+| Packet animation + 106 ms vs 200 ms race                | **Yes** (scripted traces + real CD-path write)  |
+| Timing simulator for Fast Return                        | **Yes** (`CdRaftSimulator`)                     |
+| Real Domain Leader / Global Leader state machines       | **No** — UI labels only                         |
+| Fast Return on the gRPC write path                      | **No** — client still waits for the Raft leader |
+| Two-domain commit rule in `RaftNode`                    | **No** — majority of **all 6** nodes            |
+| WAN delay gRPC interceptor                              | **No**                                          |
+| Optimal GL placement                                    | **No**                                          |
+| Linearizable `Get` (read index / lease)                 | **No** — local map read                         |
+| TLA+ model / YCSB                                       | **Not in this repo** (paper / upstream)         |
+
 
 Be explicit about that split in a defense or write-up: the **cluster proves you can build Raft**; the **simulator and dashboard teach CD-Raft’s latency argument**.
 
 ---
+
+
 
 ## Limitations
 
@@ -307,7 +338,7 @@ Be explicit about that split in a defense or write-up: the **cluster proves you 
 
 **Engineering**
 
-- KV is an in-memory `ConcurrentHashMap`. The log and term/`votedFor` survive restart, but **`commitIndex` is not persisted**, so committed entries are not replayed into the map until a leader commits again. Restart is not a complete recovery story.
+- KV is an in-memory `ConcurrentHashMap`. The log and term/`votedFor` survive restart, but `commitIndex` **is not persisted**, so committed entries are not replayed into the map until a leader commits again. Restart is not a complete recovery story.
 - Log file append is not `fsync`’d; crash safety is weaker than production Raft.
 - `Put` blocks the gRPC handler thread on a `CompletableFuture.get` (5 s timeout).
 - Dashboard JSON is hand-stringified (escaping is basic).
@@ -322,6 +353,8 @@ Be explicit about that split in a defense or write-up: the **cluster proves you 
 - No YCSB, no multi-region cloud experiment.
 
 ---
+
+
 
 ## What could be improved
 
@@ -341,6 +374,8 @@ Roughly in order of impact for a stronger CD-Raft prototype:
 
 ---
 
+
+
 ## Safety and fault-tolerance story (paper)
 
 Useful when explaining CD-Raft even though the engine is still classic Raft:
@@ -350,6 +385,8 @@ Useful when explaining CD-Raft even though the engine is still classic Raft:
 
 ---
 
+
+
 ## Stack
 
 - Java 21, Gradle, SLF4J / Logback, JUnit 5
@@ -358,6 +395,8 @@ Useful when explaining CD-Raft even though the engine is still classic Raft:
 - Docker multi-stage: `gradle:8.5-jdk21` build, `eclipse-temurin:21-jre` runtime
 
 ---
+
+
 
 ## References
 
@@ -370,6 +409,8 @@ Useful when explaining CD-Raft even though the engine is still classic Raft:
 Related geo-consensus work (for “what else exists”): Mencius, WPaxos, GeoLM, PigPaxos, EPaxos.
 
 ---
+
+
 
 ## License / status
 
