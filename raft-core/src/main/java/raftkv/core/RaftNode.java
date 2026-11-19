@@ -89,7 +89,11 @@ public class RaftNode {
         if (isOffline) return;
         lock.lock();
         try {
-            logger.info("Starting node {} in state {}", nodeId, role);
+            logger.info("Starting node {} - clean FOLLOWER initialization", nodeId);
+            role = NodeState.FOLLOWER;
+            leaderId = -1;
+            votedFor = -1;
+            stopHeartbeatTimer();
             resetElectionTimer();
         } finally {
             lock.unlock();
@@ -102,6 +106,9 @@ public class RaftNode {
             logger.info("Stopping node {}", nodeId);
             electionTimer.stop();
             stopHeartbeatTimer();
+            role = NodeState.FOLLOWER;
+            leaderId = -1;
+            votedFor = -1;
         } finally {
             lock.unlock();
         }

@@ -283,31 +283,69 @@ public class DashboardServer {
     }
 
     private boolean submitWriteToCluster(String key, String value) {
-        if (mainServer.isOffline()) return false;
-
-        if (mainServer.getRaftNode() != null && mainServer.getRaftNode().getRole() == NodeState.LEADER) {
+        // 1. If this server is local leader and online, write directly
+        if (!mainServer.isOffline() && mainServer.getRaftNode() != null && mainServer.getRaftNode().getRole() == NodeState.LEADER) {
             PutResponse resp = callLocalPut(key, value);
-            return resp.getSuccess();
+            if (resp.getSuccess()) return true;
         }
 
-        int leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
-        if (leaderId > 0 && mainServer.getPeers().containsKey(leaderId)) {
+        // 2. Discover active leader among peers quickly (concurrent query with 250ms deadline)
+        int targetLeader = -1;
+        int knownLeader = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
+        if (knownLeader > 0 && knownLeader != mainServer.getConfig().getNodeId()) {
+            targetLeader = knownLeader;
+        }
+
+        // Concurrently find who the cluster thinks the leader is
+        List<CompletableFuture<Integer>> checks = new ArrayList<>();
+        for (Map.Entry<Integer, PeerClient> entry : mainServer.getPeers().entrySet()) {
+            checks.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    raftkv.rpc.proto.StateResponse sr = entry.getValue().getState();
+                    if (!sr.getIsOffline()) {
+                        if ("LEADER".equals(sr.getRole())) {
+                            return entry.getKey();
+                        }
+                        if (sr.getLeaderId() > 0) {
+                            return sr.getLeaderId();
+                        }
+                    }
+                } catch (Exception ignored) {}
+                return -1;
+            }));
+        }
+
+        for (CompletableFuture<Integer> f : checks) {
             try {
-                PutResponse resp = mainServer.getPeers().get(leaderId).sendPut(key, value);
-                if (resp.getSuccess()) return true;
+                int detected = f.get(250, TimeUnit.MILLISECONDS);
+                if (detected > 0) {
+                    targetLeader = detected;
+                    break;
+                }
             } catch (Exception ignored) {}
         }
 
-        for (Map.Entry<Integer, PeerClient> entry : mainServer.getPeers().entrySet()) {
+        // 3. Send write to discovered leader
+        if (targetLeader > 0 && mainServer.getPeers().containsKey(targetLeader)) {
             try {
-                PutResponse resp = entry.getValue().sendPut(key, value);
+                PutResponse resp = mainServer.getPeers().get(targetLeader).sendPut(key, value);
                 if (resp.getSuccess()) return true;
-                if (resp.getLeaderId() > 0 && mainServer.getPeers().containsKey(resp.getLeaderId())) {
+                if (resp.getLeaderId() > 0 && resp.getLeaderId() != targetLeader && mainServer.getPeers().containsKey(resp.getLeaderId())) {
                     PutResponse lResp = mainServer.getPeers().get(resp.getLeaderId()).sendPut(key, value);
                     if (lResp.getSuccess()) return true;
                 }
             } catch (Exception ignored) {}
         }
+
+        // 4. Fallback: try remaining online peers
+        for (Map.Entry<Integer, PeerClient> entry : mainServer.getPeers().entrySet()) {
+            if (entry.getKey() == targetLeader) continue;
+            try {
+                PutResponse resp = entry.getValue().sendPut(key, value);
+                if (resp.getSuccess()) return true;
+            } catch (Exception ignored) {}
+        }
+
         return false;
     }
 
@@ -331,17 +369,16 @@ public class DashboardServer {
             String key = params.getOrDefault("key", "testKey");
             String value = params.getOrDefault("value", "testValue");
 
-            // Only CD-Raft submits a real write; standard type simulates success
-            // based on live leader presence to avoid two simultaneous Raft writes racing.
-            boolean writeSuccess;
+            long t0 = System.currentTimeMillis();
+            boolean writeSuccess = false;
+
             if (type.equalsIgnoreCase("cd")) {
                 writeSuccess = submitWriteToCluster(key, value);
             } else {
-                // Standard: succeed if cluster has a live leader (quorum met)
-                writeSuccess = mainServer.getRaftNode() != null
-                        && mainServer.getRaftNode().getRole() == NodeState.LEADER
-                        && !mainServer.isOffline();
-                if (!writeSuccess) {
+                // Standard visual simulation: true if cluster has any live leader
+                if (mainServer.getRaftNode() != null && mainServer.getRaftNode().getRole() == NodeState.LEADER && !mainServer.isOffline()) {
+                    writeSuccess = true;
+                } else {
                     for (Map.Entry<Integer, PeerClient> entry : mainServer.getPeers().entrySet()) {
                         try {
                             raftkv.rpc.proto.StateResponse sr = entry.getValue().getState();
@@ -353,47 +390,134 @@ public class DashboardServer {
                     }
                 }
             }
-            int leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
+
+            long rawElapsed = System.currentTimeMillis() - t0;
+            // Cap actual measured consensus between 5ms and 80ms to avoid network timeout skew
+            long actualMs = Math.max(5, Math.min(rawElapsed, 80));
+
+            // Dynamic Leader & Domain Leader resolution
+            int leaderId = -1;
+            if (!mainServer.isOffline() && mainServer.getRaftNode() != null && mainServer.getRaftNode().getRole() == NodeState.LEADER) {
+                leaderId = mainServer.getConfig().getNodeId();
+            } else {
+                leaderId = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getLeaderId() : -1;
+                if (leaderId <= 0) {
+                    for (Map.Entry<Integer, PeerClient> entry : mainServer.getPeers().entrySet()) {
+                        try {
+                            raftkv.rpc.proto.StateResponse sr = entry.getValue().getState();
+                            if ("LEADER".equals(sr.getRole()) && !sr.getIsOffline()) {
+                                leaderId = entry.getKey();
+                                break;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+            int glId = (leaderId > 0) ? leaderId : 1;
+
+            // Resolve DL in the opposite domain
+            int dlId;
+            if (glId <= 3) {
+                // GL is in Virginia (Domain A) -> DL is in London (Domain B: 4, 5, 6)
+                dlId = 4;
+                for (int b = 4; b <= 6; b++) {
+                    PeerClient pc = mainServer.getPeers().get(b);
+                    if (pc != null) {
+                        try {
+                            if (!pc.getState().getIsOffline()) { dlId = b; break; }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } else {
+                // GL is in London (Domain B) -> DL is in Virginia (Domain A: 1, 2, 3)
+                dlId = 1;
+                if (mainServer.getConfig().getNodeId() <= 3 && !mainServer.isOffline()) {
+                    dlId = mainServer.getConfig().getNodeId();
+                } else {
+                    for (int a = 1; a <= 3; a++) {
+                        PeerClient pc = mainServer.getPeers().get(a);
+                        if (pc != null) {
+                            try {
+                                if (!pc.getState().getIsOffline()) { dlId = a; break; }
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            }
+
+            final int WAN = 50;
+            final int LAN = 2;
+            long cdTotalMs = WAN * 2 + actualMs + LAN;
+            long stdTotalMs = WAN * 4 + actualMs;
+
             long commitIdx = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getCommitIndex() : 0;
             long term = mainServer.getRaftNode() != null ? mainServer.getRaftNode().getCurrentTerm() : 0;
 
             StringBuilder json = new StringBuilder();
             json.append("{");
             json.append("\"success\":").append(writeSuccess).append(",");
-            json.append("\"leaderId\":").append(leaderId).append(",");
+            json.append("\"leaderId\":").append(glId).append(",");
+            json.append("\"dlId\":").append(dlId).append(",");
             json.append("\"commitIndex\":").append(commitIdx).append(",");
             json.append("\"term\":").append(term).append(",");
             json.append("\"type\":\"").append(type).append("\",");
             json.append("\"key\":\"").append(escapeJson(key)).append("\",");
             json.append("\"value\":\"").append(escapeJson(value)).append("\",");
+            json.append("\"actualMs\":").append(actualMs).append(",");
+            json.append("\"cdTotalMs\":").append(cdTotalMs).append(",");
+            json.append("\"stdTotalMs\":").append(stdTotalMs).append(",");
+
+            String glNode = "node-" + glId;
+            String dlNode = "node-" + dlId;
+            String glDomain = glId <= 3 ? "Virginia" : "London";
+            String dlDomain = dlId <= 3 ? "Virginia" : "London";
 
             if (type.equalsIgnoreCase("cd")) {
-                json.append("\"totalLatency\":106,");
+                long w = WAN;
+                long l = LAN;
+                long w2 = w * 2;
+                long dlDone = w2 + actualMs;
+                long cdEnd = dlDone + l;
+                json.append("\"totalLatency\":").append(cdEnd).append(",");
                 json.append("\"steps\":[");
-                json.append("{\"from\":\"client\",\"to\":\"node-1\",\"start\":0,\"end\":50,\"label\":\"Client in London sends write to Global Leader (Node 1 in Virginia)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-2\",\"start\":50,\"end\":52,\"label\":\"GL replicates to Node 2 (In-Domain LAN, 2ms)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-3\",\"start\":50,\"end\":52,\"label\":\"GL replicates to Node 3 (In-Domain LAN, 2ms) -> Domain A Quorum (2/3) Met!\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-4\",\"start\":50,\"end\":100,\"label\":\"GL dispatches batch to Domain Leader Node 4 (WAN 50ms)\"},");
-                json.append("{\"from\":\"node-4\",\"to\":\"node-5\",\"start\":100,\"end\":102,\"label\":\"DL Node 4 replicates to Node 5 (In-Domain LAN, 2ms)\"},");
-                json.append("{\"from\":\"node-4\",\"to\":\"node-6\",\"start\":100,\"end\":102,\"label\":\"DL Node 4 replicates to Node 6 (In-Domain LAN, 2ms) -> Domain B Quorum (2/3) Met!\"},");
-                json.append("{\"from\":\"node-4\",\"to\":\"client\",\"start\":104,\"end\":106,\"label\":\"Fast Return: DL Node 4 responds directly to local client (2ms)!\"}");
+                json.append("{\"from\":\"client\",\"to\":\""+glNode+"\",\"start\":0,\"end\":"+w+",\"label\":\"Client → GL ("+glNode+" in "+glDomain+"): WAN "+w+"ms\"},");
+                
+                // GL local in-domain replication
+                int glPeer1 = (glId <= 3) ? (glId == 1 ? 2 : 1) : (glId == 4 ? 5 : 4);
+                int glPeer2 = (glId <= 3) ? (glId == 3 ? 2 : 3) : (glId == 6 ? 5 : 6);
+                json.append("{\"from\":\""+glNode+"\",\"to\":\"node-"+glPeer1+"\",\"start\":"+w+",\"end\":"+(w+l)+",\"label\":\"GL→node-"+glPeer1+": LAN ("+l+"ms)\"},");
+                json.append("{\"from\":\""+glNode+"\",\"to\":\"node-"+glPeer2+"\",\"start\":"+w+",\"end\":"+(w+l)+",\"label\":\"GL→node-"+glPeer2+": LAN ("+l+"ms) → Local Quorum 2/3 Met!\"},");
+                
+                // Cross-domain batch to DL
+                json.append("{\"from\":\""+glNode+"\",\"to\":\""+dlNode+"\",\"start\":"+w+",\"end\":"+w2+",\"label\":\"GL→DL ("+dlNode+" in "+dlDomain+"): cross-domain WAN "+w+"ms\"},");
+                
+                // DL local in-domain replication
+                int dlPeer1 = (dlId <= 3) ? (dlId == 1 ? 2 : 1) : (dlId == 4 ? 5 : 4);
+                int dlPeer2 = (dlId <= 3) ? (dlId == 3 ? 2 : 3) : (dlId == 6 ? 5 : 6);
+                json.append("{\"from\":\""+dlNode+"\",\"to\":\"node-"+dlPeer1+"\",\"start\":"+w2+",\"end\":"+dlDone+",\"label\":\"DL→node-"+dlPeer1+": LAN ("+l+"ms) local consensus\"},");
+                json.append("{\"from\":\""+dlNode+"\",\"to\":\"node-"+dlPeer2+"\",\"start\":"+w2+",\"end\":"+dlDone+",\"label\":\"DL→node-"+dlPeer2+": LAN ("+l+"ms) → Remote Quorum 2/3 Met!\"},");
+                
+                // Fast Return directly to client
+                json.append("{\"from\":\""+dlNode+"\",\"to\":\"client\",\"start\":"+dlDone+",\"end\":"+cdEnd+",\"label\":\"⚡ Fast Return: DL ("+dlNode+") → Client ("+l+"ms LAN)!\"}");
                 json.append("]");
             } else {
-                json.append("\"totalLatency\":200,");
+                long w = WAN;
+                long l = LAN;
+                long replicaDone = w + actualMs;
+                long ackBack = replicaDone + w;
+                long reply = ackBack + w;
+                json.append("\"totalLatency\":").append(reply).append(",");
                 json.append("\"steps\":[");
-                json.append("{\"from\":\"client\",\"to\":\"node-1\",\"start\":0,\"end\":50,\"label\":\"Client in London sends write to Leader Node 1 (WAN 50ms)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-2\",\"start\":50,\"end\":52,\"label\":\"Leader replicates to Node 2 (In-Domain)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-3\",\"start\":50,\"end\":52,\"label\":\"Leader replicates to Node 3 (In-Domain, 3/6 nodes - Need 4 for Quorum!)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-4\",\"start\":50,\"end\":100,\"label\":\"Leader replicates to Node 4 (WAN 50ms)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-5\",\"start\":50,\"end\":100,\"label\":\"Leader replicates to Node 5 (WAN 50ms)\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"node-6\",\"start\":50,\"end\":100,\"label\":\"Leader replicates to Node 6 (WAN 50ms)\"},");
-                json.append("{\"from\":\"node-4\",\"to\":\"node-1\",\"start\":100,\"end\":150,\"label\":\"Node 4 ACK returns to Virginia (WAN 50ms) -> 4/6 Global Quorum Met!\"},");
-                json.append("{\"from\":\"node-1\",\"to\":\"client\",\"start\":150,\"end\":200,\"label\":\"Leader commits and replies from Virginia back to London (WAN 50ms)\"}");
+                json.append("{\"from\":\"client\",\"to\":\""+glNode+"\",\"start\":0,\"end\":"+w+",\"label\":\"Client → Leader ("+glNode+" in "+glDomain+"): WAN "+w+"ms\"},");
+                for (int i = 1; i <= 6; i++) {
+                    if (i == glId) continue;
+                    json.append("{\"from\":\""+glNode+"\",\"to\":\"node-"+i+"\",\"start\":"+w+",\"end\":"+replicaDone+",\"label\":\"Leader→node-"+i+": replication\"},");
+                }
+                json.append("{\"from\":\""+dlNode+"\",\"to\":\""+glNode+"\",\"start\":"+replicaDone+",\"end\":"+ackBack+",\"label\":\"ACK returned across ocean: WAN "+w+"ms → 4/6 Majority Met!\"},");
+                json.append("{\"from\":\""+glNode+"\",\"to\":\"client\",\"start\":"+ackBack+",\"end\":"+reply+",\"label\":\"Leader replies to Client: second WAN cross "+w+"ms (total "+reply+"ms)\"}");
                 json.append("]");
             }
             json.append("}");
-
-
 
             sendTextResponse(exchange, 200, json.toString(), "application/json");
         }

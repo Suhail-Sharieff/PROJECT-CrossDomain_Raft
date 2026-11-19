@@ -61,7 +61,7 @@ public class PeerClient {
     }
 
     public PutResponse sendPut(String key, String value) {
-        return kvBlockingStub.withDeadlineAfter(3, TimeUnit.SECONDS).put(
+        return kvBlockingStub.withDeadlineAfter(1000, TimeUnit.MILLISECONDS).put(
                 PutRequest.newBuilder().setKey(key).setValue(value).build()
         );
     }

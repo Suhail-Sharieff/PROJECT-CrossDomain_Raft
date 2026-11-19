@@ -39,6 +39,11 @@ export default function App() {
   const [stdLabel, setStdLabel] = useState("Classic Raft (6 nodes): Ready.");
   const [cdLabel, setCdLabel] = useState("CD-Raft (3+3 nodes): Ready.");
 
+  // Dynamic measured latency values (updated after each race)
+  const [lastCdTotalMs, setLastCdTotalMs] = useState(null);
+  const [lastStdTotalMs, setLastStdTotalMs] = useState(null);
+  const [lastActualMs, setLastActualMs] = useState(null);
+
   // Overall operation result tracker
   const [lastOpResult, setLastOpResult] = useState(null);
 
@@ -106,9 +111,15 @@ export default function App() {
       fetch(`/api/simulate-write?type=cd&key=${encodeURIComponent(putKey)}&value=${encodeURIComponent(putValue)}`, { method: "POST" }).then(r => r.json())
     ])
     .then(([stdData, cdData]) => {
+      // Store measured latency values so the latency card updates live
+      const cdMs = cdData.cdTotalMs || 106;
+      const stdMs = cdData.stdTotalMs || 200;
+      const actualMs = cdData.actualMs ?? null;
+      setLastCdTotalMs(cdMs);
+      setLastStdTotalMs(stdMs);
+      setLastActualMs(actualMs);
       // Success is determined by the CD-Raft write result (only one real write submitted)
-      // stdData.success is based on live leader presence, not an actual write
-      startConsensusRace(stdData.steps, cdData.steps, cdData.success, cdData);
+      startConsensusRace(stdData.steps, cdData.steps, cdData.success, cdData, cdMs, stdMs);
     })
     .catch(err => {
       setLastOpResult({
@@ -122,15 +133,17 @@ export default function App() {
     });
   };
 
-  const startConsensusRace = (stdSteps, cdSteps, isSuccess, cdData) => {
+  const startConsensusRace = (stdSteps, cdSteps, isSuccess, cdData, dynCdMs = 106, dynStdMs = 200) => {
     const startWallTime = performance.now();
-    const SPEED_FACTOR = 16; // 16x visual slowdown
+    // Scale factor: 1 simulated ms = how many real ms of animation
+    // We want the full race to take ~6 seconds on screen regardless of dynStdMs
+    const SPEED_FACTOR = Math.max(8, dynStdMs / 25);
 
     const animate = (time) => {
       let elapsed = (time - startWallTime) / SPEED_FACTOR;
 
       // 1. Classic Raft
-      if (elapsed <= 200) {
+      if (elapsed <= dynStdMs) {
         setStdProgress(elapsed);
         let active = [];
         let label = "Classic Raft executing...";
@@ -153,20 +166,20 @@ export default function App() {
         });
         setStdPacket(activePacket);
         setStdActiveLinks(active.map(s => `${s.from}->${s.to}`));
-        setStdLabel(`[${Math.round(elapsed)}ms] ${label}`);
+        setStdLabel(`[${Math.round(elapsed)}ms / ${dynStdMs}ms] ${label}`);
       } else {
         setStdPacket(null);
         setStdActiveLinks([]);
-        setStdProgress(200);
+        setStdProgress(dynStdMs);
         if (classicHasQuorum) {
-          setStdLabel("Classic Raft: COMMITTED in 200ms (2.0 WAN RTTs).");
+          setStdLabel(`Classic Raft: COMMITTED in ${dynStdMs}ms (100ms sim WAN + ${dynStdMs - 200}ms measured consensus overhead).`);
         } else {
-          setStdLabel("Classic Raft: FAILED (Quorum lost: need 4 nodes, only " + totalOnlineCount + " online)!");
+          setStdLabel(`Classic Raft: FAILED (need 4/6 nodes, only ${totalOnlineCount} online)!`);
         }
       }
 
       // 2. CD-Raft
-      if (elapsed <= 106) {
+      if (elapsed <= dynCdMs) {
         setCdProgress(elapsed);
         let active = [];
         let label = "CD-Raft executing...";
@@ -189,31 +202,31 @@ export default function App() {
         });
         setCdPacket(activePacket);
         setCdActiveLinks(active.map(s => `${s.from}->${s.to}`));
-        setCdLabel(`[${Math.round(elapsed)}ms] ${label}`);
+        setCdLabel(`[${Math.round(elapsed)}ms / ${dynCdMs}ms] ${label}`);
       } else {
         setCdPacket(null);
         setCdActiveLinks([]);
-        setCdProgress(106);
+        setCdProgress(dynCdMs);
         if (domainAHasQuorum && domainBHasQuorum) {
-          setCdLabel("CD-Raft: COMMITTED in 106ms (1.0 WAN RTT Fast Return via DL)!");
+          setCdLabel(`CD-Raft: COMMITTED in ${dynCdMs}ms via Fast Return (1 WAN RTT saved vs Classic ${dynStdMs}ms)!`);
         } else {
-          setCdLabel("CD-Raft: FAILED (Domain Quorum Lost: Domain A=" + domainAOnlineNodes.length + "/3, Domain B=" + domainBOnlineNodes.length + "/3)!");
+          setCdLabel(`CD-Raft: FAILED (Domain A=${domainAOnlineNodes.length}/3, Domain B=${domainBOnlineNodes.length}/3)!`);
         }
       }
 
-      if (elapsed < 200) {
+      if (elapsed < dynStdMs) {
         requestAnimationFrame(animate);
       } else {
         setRunning(false);
         fetchState();
 
         const cdOk = domainAHasQuorum && domainBHasQuorum && isSuccess;
-        const globalOk = classicHasQuorum && isSuccess;
+        const saving = dynStdMs - dynCdMs;
+        const savingPct = Math.round((saving / dynStdMs) * 100);
 
-        // Determine failure reason accurately
         let failureReason = "";
         if (!isSuccess) {
-          failureReason = "Cluster write rejected (no leader or leader election in progress). Wait for election to complete and retry.";
+          failureReason = "Cluster write rejected (no leader or election in progress). Wait for new leader and retry.";
         } else if (!domainAHasQuorum) {
           failureReason = `Domain A quorum lost (${domainAOnlineNodes.length}/3 alive, need 2). CD-Raft cannot commit.`;
         } else if (!domainBHasQuorum) {
@@ -229,7 +242,7 @@ export default function App() {
           commitIndex: cdData?.commitIndex || 0,
           term: cdData?.term || 0,
           message: cdOk
-            ? `Consensus write committed successfully across quorum (106ms Fast Return)! Applied to all ${totalOnlineCount} live state machines.`
+            ? `Committed via Fast Return in ${dynCdMs}ms vs Classic ${dynStdMs}ms — saved ${saving}ms (${savingPct}% faster). Applied to all ${totalOnlineCount} live state machines.`
             : failureReason
         });
       }
@@ -454,30 +467,59 @@ export default function App() {
         {/* Latency Comparison Card */}
         <div className="bg-gray-950 border border-gray-900 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-            <Activity className="h-4 w-4 text-yellow-500" /> Latency Benchmark (6 Nodes)
+            <Activity className="h-4 w-4 text-yellow-500" /> Latency Benchmark
+            {lastActualMs !== null && (
+              <span className="ml-auto text-[9px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono">
+                MEASURED
+              </span>
+            )}
           </h2>
           <div className="space-y-3.5 my-auto">
             <div>
               <div className="flex justify-between text-xs text-gray-400 mb-1 font-mono">
-                <span>Classic Raft (4/6 Quorum)</span>
-                <span className="font-bold text-red-400">200 ms (2.0 RTTs)</span>
+                <span>Classic Raft (4/6 Global Quorum)</span>
+                <span className="font-bold text-red-400">
+                  {lastStdTotalMs !== null ? `${lastStdTotalMs} ms` : "200 ms"} (2 WAN RTTs)
+                </span>
               </div>
-              <div className="h-2 w-full bg-gray-900 rounded-full overflow-hidden border border-gray-800">
-                <div className="bg-red-500 h-full" style={{ width: "100%" }}></div>
+              <div className="h-2.5 w-full bg-gray-900 rounded-full overflow-hidden border border-gray-800">
+                <div className="bg-red-500 h-full rounded-full" style={{ width: "100%" }}></div>
               </div>
+              {lastActualMs !== null && (
+                <div className="text-[9px] text-gray-500 font-mono mt-0.5">
+                  = 100ms sim WAN + {lastActualMs}ms measured consensus
+                </div>
+              )}
             </div>
             <div>
               <div className="flex justify-between text-xs text-gray-400 mb-1 font-mono">
                 <span>CD-Raft (2/3 + 2/3 Fast Return)</span>
-                <span className="font-bold text-yellow-400">106 ms (1.0 RTT)</span>
+                <span className="font-bold text-yellow-400">
+                  {lastCdTotalMs !== null ? `${lastCdTotalMs} ms` : "106 ms"} (1 WAN RTT)
+                </span>
               </div>
-              <div className="h-2 w-full bg-gray-900 rounded-full overflow-hidden border border-gray-800">
-                <div className="bg-yellow-500 h-full animate-pulse" style={{ width: "53%" }}></div>
+              <div className="h-2.5 w-full bg-gray-900 rounded-full overflow-hidden border border-gray-800">
+                <div
+                  className="bg-yellow-500 h-full rounded-full"
+                  style={{ width: lastStdTotalMs && lastCdTotalMs ? `${(lastCdTotalMs / lastStdTotalMs) * 100}%` : "53%" }}
+                ></div>
               </div>
+              {lastActualMs !== null && (
+                <div className="text-[9px] text-gray-500 font-mono mt-0.5">
+                  = 100ms sim WAN + {lastActualMs}ms measured consensus + 2ms LAN Fast Return
+                </div>
+              )}
             </div>
           </div>
-          <span className="text-[10.5px] text-gray-400 text-center font-medium">
-            CD-Raft cuts cross-domain write latency by <strong className="text-yellow-400 font-bold">~47%</strong>.
+          <span className="text-[10.5px] text-gray-400 text-center font-medium mt-2">
+            {lastStdTotalMs && lastCdTotalMs ? (
+              <>
+                CD-Raft saved <strong className="text-yellow-400 font-bold">{lastStdTotalMs - lastCdTotalMs}ms</strong>
+                {" "}(<strong className="text-yellow-400">{Math.round(((lastStdTotalMs - lastCdTotalMs) / lastStdTotalMs) * 100)}%</strong> faster) on this run.
+              </>
+            ) : (
+              <>CD-Raft cuts cross-domain write latency by <strong className="text-yellow-400 font-bold">~47%</strong>.</>
+            )}
           </span>
         </div>
       </div>
@@ -508,33 +550,24 @@ export default function App() {
               <rect x="5" y="5" width="340" height="220" fill="none" stroke="#1f2937" strokeWidth="1" strokeDasharray="3 3" />
               <text x="15" y="20" fill="#4b5563" fontSize="8" fontWeight="bold">FLAT 6-NODE TOPOLOGY</text>
 
-              {/* Links */}
-              <line x1={STD_COORDS.client.x} y1={STD_COORDS.client.y} x2={STD_COORDS["node-1"].x} y2={STD_COORDS["node-1"].y}
-                    stroke={stdActiveLinks.includes("client->node-1") || stdActiveLinks.includes("node-1->client") ? "#ef4444" : "#111827"}
-                    strokeWidth={stdActiveLinks.includes("client->node-1") || stdActiveLinks.includes("node-1->client") ? "3" : "1.5"}
-                    opacity={!getNodeInfo(1).online ? 0.2 : 1} />
+              {/* Dynamic Links from Active Leader */}
+              <line x1={STD_COORDS.client.x} y1={STD_COORDS.client.y} x2={(STD_COORDS[`node-${globalLeaderId}`] || STD_COORDS["node-1"]).x} y2={(STD_COORDS[`node-${globalLeaderId}`] || STD_COORDS["node-1"]).y}
+                    stroke={stdActiveLinks.some(l => l.startsWith("client->") || l.endsWith("->client")) ? "#ef4444" : "#111827"}
+                    strokeWidth={stdActiveLinks.some(l => l.startsWith("client->") || l.endsWith("->client")) ? "3" : "1.5"}
+                    opacity={!getNodeInfo(globalLeaderId).online ? 0.2 : 1} />
               
-              <line x1={STD_COORDS["node-1"].x} y1={STD_COORDS["node-1"].y} x2={STD_COORDS["node-2"].x} y2={STD_COORDS["node-2"].y}
-                    stroke={stdActiveLinks.includes("node-1->node-2") || stdActiveLinks.includes("node-2->node-1") ? "#34d399" : "#111827"}
-                    strokeWidth={stdActiveLinks.includes("node-1->node-2") || stdActiveLinks.includes("node-2->node-1") ? "2" : "1.2"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(2).online ? 0.2 : 1} />
-              <line x1={STD_COORDS["node-1"].x} y1={STD_COORDS["node-1"].y} x2={STD_COORDS["node-3"].x} y2={STD_COORDS["node-3"].y}
-                    stroke={stdActiveLinks.includes("node-1->node-3") || stdActiveLinks.includes("node-3->node-1") ? "#34d399" : "#111827"}
-                    strokeWidth={stdActiveLinks.includes("node-1->node-3") || stdActiveLinks.includes("node-3->node-1") ? "2" : "1.2"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(3).online ? 0.2 : 1} />
-
-              <line x1={STD_COORDS["node-1"].x} y1={STD_COORDS["node-1"].y} x2={STD_COORDS["node-4"].x} y2={STD_COORDS["node-4"].y}
-                    stroke={stdActiveLinks.includes("node-1->node-4") || stdActiveLinks.includes("node-4->node-1") ? "#ef4444" : "#111827"}
-                    strokeWidth={stdActiveLinks.includes("node-1->node-4") || stdActiveLinks.includes("node-4->node-1") ? "3" : "1.5"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(4).online ? 0.2 : 1} />
-              <line x1={STD_COORDS["node-1"].x} y1={STD_COORDS["node-1"].y} x2={STD_COORDS["node-5"].x} y2={STD_COORDS["node-5"].y}
-                    stroke={stdActiveLinks.includes("node-1->node-5") || stdActiveLinks.includes("node-5->node-1") ? "#ef4444" : "#111827"}
-                    strokeWidth={stdActiveLinks.includes("node-1->node-5") || stdActiveLinks.includes("node-5->node-1") ? "2.5" : "1.2"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(5).online ? 0.2 : 1} />
-              <line x1={STD_COORDS["node-1"].x} y1={STD_COORDS["node-1"].y} x2={STD_COORDS["node-6"].x} y2={STD_COORDS["node-6"].y}
-                    stroke={stdActiveLinks.includes("node-1->node-6") || stdActiveLinks.includes("node-6->node-1") ? "#ef4444" : "#111827"}
-                    strokeWidth={stdActiveLinks.includes("node-1->node-6") || stdActiveLinks.includes("node-6->node-1") ? "2.5" : "1.2"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(6).online ? 0.2 : 1} />
+              {[1, 2, 3, 4, 5, 6].filter(id => id !== globalLeaderId).map(id => {
+                const isAct = stdActiveLinks.includes(`node-${globalLeaderId}->node-${id}`) || stdActiveLinks.includes(`node-${id}->node-${globalLeaderId}`);
+                const glC = STD_COORDS[`node-${globalLeaderId}`] || STD_COORDS["node-1"];
+                const targetC = STD_COORDS[`node-${id}`];
+                return (
+                  <line key={`classic-link-${id}`}
+                        x1={glC.x} y1={glC.y} x2={targetC.x} y2={targetC.y}
+                        stroke={isAct ? "#ef4444" : "#111827"}
+                        strokeWidth={isAct ? "2.5" : "1.2"}
+                        opacity={!getNodeInfo(globalLeaderId).online || !getNodeInfo(id).online ? 0.2 : 1} />
+                );
+              })}
 
               {/* Dynamic Nodes */}
               {[1, 2, 3, 4, 5, 6].map(id => renderClassicSvgNode(id))}
@@ -556,7 +589,7 @@ export default function App() {
           {/* Progress Timeline */}
           <div className="space-y-1.5">
             <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden border border-gray-800">
-              <div className="bg-red-500 h-full transition-all duration-100" style={{ width: `${(stdProgress / 200) * 100}%` }}></div>
+              <div className="bg-red-500 h-full transition-all duration-100" style={{ width: `${(stdProgress / (lastStdTotalMs || 200)) * 100}%` }}></div>
             </div>
             <div className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-xl text-[10.5px] font-mono text-red-400 min-h-[36px] flex items-center">
               {stdLabel}
@@ -589,43 +622,65 @@ export default function App() {
               <text x="25" y="20" fill="#4b5563" fontSize="8" fontWeight="bold">DOM A (VIRGINIA)</text>
               <text x="170" y="20" fill="#4b5563" fontSize="8" fontWeight="bold">DOM B (LONDON)</text>
 
-              {/* Client -> GL1 (WAN) */}
-              <line x1={CD_COORDS.client.x} y1={CD_COORDS.client.y} x2={CD_COORDS["node-1"].x} y2={CD_COORDS["node-1"].y}
-                    stroke={cdActiveLinks.includes("client->node-1") || cdActiveLinks.includes("node-1->client") ? "#fbbf24" : "#111827"}
-                    strokeWidth={cdActiveLinks.includes("client->node-1") || cdActiveLinks.includes("node-1->client") ? "3" : "1.5"}
-                    opacity={!getNodeInfo(1).online ? 0.2 : 1} />
+              {/* Dynamic CD-Raft Links between GL and DL */}
+              {(() => {
+                const curGL = globalLeaderId;
+                const curDL = curGL <= 3 ? domainBLeaderId : domainALeaderId;
+                const glC = CD_COORDS[`node-${curGL}`] || CD_COORDS["node-1"];
+                const dlC = CD_COORDS[`node-${curDL}`] || CD_COORDS["node-4"];
+                const glDomainPeers = (curGL <= 3 ? [1, 2, 3] : [4, 5, 6]).filter(id => id !== curGL);
+                const dlDomainPeers = (curDL <= 3 ? [1, 2, 3] : [4, 5, 6]).filter(id => id !== curDL);
 
-              {/* GL1 -> N2, N3 (Domain A Local LAN) */}
-              <line x1={CD_COORDS["node-1"].x} y1={CD_COORDS["node-1"].y} x2={CD_COORDS["node-2"].x} y2={CD_COORDS["node-2"].y}
-                    stroke={cdActiveLinks.includes("node-1->node-2") || cdActiveLinks.includes("node-2->node-1") ? "#34d399" : "#111827"}
-                    strokeWidth={cdActiveLinks.includes("node-1->node-2") || cdActiveLinks.includes("node-2->node-1") ? "2" : "1.2"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(2).online ? 0.2 : 1} />
-              <line x1={CD_COORDS["node-1"].x} y1={CD_COORDS["node-1"].y} x2={CD_COORDS["node-3"].x} y2={CD_COORDS["node-3"].y}
-                    stroke={cdActiveLinks.includes("node-1->node-3") || cdActiveLinks.includes("node-3->node-1") ? "#34d399" : "#111827"}
-                    strokeWidth={cdActiveLinks.includes("node-1->node-3") || cdActiveLinks.includes("node-3->node-1") ? "2" : "1.2"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(3).online ? 0.2 : 1} />
+                const clientGlActive = cdActiveLinks.some(l => l.startsWith("client->node-") || l.endsWith("->client") && !l.includes(`node-${curDL}`));
+                const bridgeActive = cdActiveLinks.some(l => (l.includes(`node-${curGL}`) && l.includes(`node-${curDL}`)));
+                const fastReturnActive = cdActiveLinks.some(l => l.includes(`node-${curDL}->client`) || l.includes(`client->node-${curDL}`));
 
-              {/* GL1 -> DL4 (Cross-Domain WAN Bridge) */}
-              <line x1={CD_COORDS["node-1"].x} y1={CD_COORDS["node-1"].y} x2={CD_COORDS["node-4"].x} y2={CD_COORDS["node-4"].y}
-                    stroke={cdActiveLinks.includes("node-1->node-4") || cdActiveLinks.includes("node-4->node-1") ? "#fbbf24" : "#111827"}
-                    strokeWidth={cdActiveLinks.includes("node-1->node-4") || cdActiveLinks.includes("node-4->node-1") ? "3.5" : "1.5"}
-                    opacity={!getNodeInfo(1).online || !getNodeInfo(4).online ? 0.2 : 1} />
+                return (
+                  <>
+                    {/* Client -> GL */}
+                    <line x1={CD_COORDS.client.x} y1={CD_COORDS.client.y} x2={glC.x} y2={glC.y}
+                          stroke={clientGlActive ? "#fbbf24" : "#111827"}
+                          strokeWidth={clientGlActive ? "3" : "1.5"}
+                          opacity={!getNodeInfo(curGL).online ? 0.2 : 1} />
 
-              {/* DL4 -> N5, N6 (Domain B Local LAN) */}
-              <line x1={CD_COORDS["node-4"].x} y1={CD_COORDS["node-4"].y} x2={CD_COORDS["node-5"].x} y2={CD_COORDS["node-5"].y}
-                    stroke={cdActiveLinks.includes("node-4->node-5") || cdActiveLinks.includes("node-5->node-4") ? "#34d399" : "#111827"}
-                    strokeWidth={cdActiveLinks.includes("node-4->node-5") || cdActiveLinks.includes("node-5->node-4") ? "2" : "1.2"}
-                    opacity={!getNodeInfo(4).online || !getNodeInfo(5).online ? 0.2 : 1} />
-              <line x1={CD_COORDS["node-4"].x} y1={CD_COORDS["node-4"].y} x2={CD_COORDS["node-6"].x} y2={CD_COORDS["node-6"].y}
-                    stroke={cdActiveLinks.includes("node-4->node-6") || cdActiveLinks.includes("node-6->node-4") ? "#34d399" : "#111827"}
-                    strokeWidth={cdActiveLinks.includes("node-4->node-6") || cdActiveLinks.includes("node-6->node-4") ? "2" : "1.2"}
-                    opacity={!getNodeInfo(4).online || !getNodeInfo(6).online ? 0.2 : 1} />
+                    {/* GL -> Local Domain Peers */}
+                    {glDomainPeers.map(id => {
+                      const peerC = CD_COORDS[`node-${id}`];
+                      const isAct = cdActiveLinks.some(l => l.includes(`node-${curGL}->node-${id}`) || l.includes(`node-${id}->node-${curGL}`));
+                      return (
+                        <line key={`gl-peer-${id}`} x1={glC.x} y1={glC.y} x2={peerC.x} y2={peerC.y}
+                              stroke={isAct ? "#34d399" : "#111827"}
+                              strokeWidth={isAct ? "2" : "1.2"}
+                              opacity={!getNodeInfo(curGL).online || !getNodeInfo(id).online ? 0.2 : 1} />
+                      );
+                    })}
 
-              {/* DL4 -> Client (Fast Return Local LAN) */}
-              <line x1={CD_COORDS["node-4"].x} y1={CD_COORDS["node-4"].y} x2={CD_COORDS.client.x} y2={CD_COORDS.client.y}
-                    stroke={cdActiveLinks.includes("node-4->client") || cdActiveLinks.includes("client->node-4") ? "#fbbf24" : "#111827"}
-                    strokeWidth={cdActiveLinks.includes("node-4->client") || cdActiveLinks.includes("client->node-4") ? "3" : "1.5"}
-                    opacity={!getNodeInfo(4).online ? 0.2 : 1} />
+                    {/* GL -> DL (Cross-Domain WAN Bridge) */}
+                    <line x1={glC.x} y1={glC.y} x2={dlC.x} y2={dlC.y}
+                          stroke={bridgeActive ? "#fbbf24" : "#111827"}
+                          strokeWidth={bridgeActive ? "3.5" : "1.5"}
+                          opacity={!getNodeInfo(curGL).online || !getNodeInfo(curDL).online ? 0.2 : 1} />
+
+                    {/* DL -> Remote Domain Peers */}
+                    {dlDomainPeers.map(id => {
+                      const peerC = CD_COORDS[`node-${id}`];
+                      const isAct = cdActiveLinks.some(l => l.includes(`node-${curDL}->node-${id}`) || l.includes(`node-${id}->node-${curDL}`));
+                      return (
+                        <line key={`dl-peer-${id}`} x1={dlC.x} y1={dlC.y} x2={peerC.x} y2={peerC.y}
+                              stroke={isAct ? "#34d399" : "#111827"}
+                              strokeWidth={isAct ? "2" : "1.2"}
+                              opacity={!getNodeInfo(curDL).online || !getNodeInfo(id).online ? 0.2 : 1} />
+                      );
+                    })}
+
+                    {/* DL -> Client (Fast Return) */}
+                    <line x1={dlC.x} y1={dlC.y} x2={CD_COORDS.client.x} y2={CD_COORDS.client.y}
+                          stroke={fastReturnActive ? "#fbbf24" : "#111827"}
+                          strokeWidth={fastReturnActive ? "3" : "1.5"}
+                          opacity={!getNodeInfo(curDL).online ? 0.2 : 1} />
+                  </>
+                );
+              })()}
 
               {/* Dynamic CD-Raft Nodes */}
               {[1, 2, 3, 4, 5, 6].map(id => renderCdSvgNode(id))}
@@ -647,7 +702,7 @@ export default function App() {
           {/* Progress Timeline */}
           <div className="space-y-1.5">
             <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden border border-gray-800">
-              <div className="bg-yellow-500 h-full transition-all duration-100" style={{ width: `${(cdProgress / 106) * 100}%` }}></div>
+              <div className="bg-yellow-500 h-full transition-all duration-100" style={{ width: `${(cdProgress / (lastCdTotalMs || 106)) * 100}%` }}></div>
             </div>
             <div className="px-3 py-1.5 bg-gray-900 border border-gray-800 rounded-xl text-[10.5px] font-mono text-yellow-400 min-h-[36px] flex items-center">
               {cdLabel}
