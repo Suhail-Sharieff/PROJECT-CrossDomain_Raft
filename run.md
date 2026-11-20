@@ -30,10 +30,10 @@ If you want to modify the React UI live:
    • Show the two domains (Virginia vs London). Explain that in multi-datacenter deployments, WAN round-trips take ~100ms whereas local LAN
    round-trips take ~4ms.
 2. Point to the Dual-Leader Topology:
-   • Highlight GL 1 (Global Leader) in Virginia and DL 3 (Domain Leader) in London.
+   • Highlight GL 1 (Global Leader) in Virginia (Nodes 1-3) and DL 4 (Domain Leader) in London (Nodes 4-6).
 3. Execute the Race:
    • Click Run Consensus Race.
-   • Show your professor the live packet racing: CD-Raft completes early in 106ms because DL 3 returns early via Fast Return, while Classic
+   • Show your professor the live packet racing: CD-Raft completes early in 106ms because London DL 4 returns early via Fast Return, while Classic
    Raft is still waiting for replication across the ocean (200ms).
 4. Demonstrate Disaster Tolerance:
    • Click Simulate Crash on GL 1. Show the term incrementing and a new election taking place automatically in the cluster cards below.

@@ -142,7 +142,10 @@ public class RaftCliClient {
                     return;
                 } else {
                     int leaderId = response.getLeaderId();
-                    if (leaderId != -1 && servers.containsKey(leaderId)) {
+                    if (leaderId > 0) {
+                        if (!servers.containsKey(leaderId)) {
+                            servers.put(leaderId, "localhost:" + (8000 + leaderId));
+                        }
                         System.out.println("REDIRECT: Node " + currentServerId + " is not the leader. Redirecting to Leader Node " + leaderId + "...");
                         connect(leaderId);
                     } else {
@@ -180,7 +183,10 @@ public class RaftCliClient {
                     return;
                 } else {
                     int leaderId = response.getLeaderId();
-                    if (leaderId != -1 && servers.containsKey(leaderId)) {
+                    if (leaderId > 0) {
+                        if (!servers.containsKey(leaderId)) {
+                            servers.put(leaderId, "localhost:" + (8000 + leaderId));
+                        }
                         System.out.println("REDIRECT: Node " + currentServerId + " redirected to Leader Node " + leaderId + "...");
                         connect(leaderId);
                     } else {

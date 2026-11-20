@@ -274,16 +274,18 @@ Open [http://localhost:3000](http://localhost:3000) (Vite proxies `/api` to `htt
 Set env vars per node (`NODE_ID`, `NODE_PORT`, `PEERS`, timeouts, `DATA_DIR`) and run `:raft-server`. Example shape for node 1:
 
 ```text
+# Domain A (Virginia): Nodes 1, 2, 3 (ports 8001-8003)
+# Domain B (London):   Nodes 4, 5, 6 (ports 8004-8006)
 NODE_ID=1
 NODE_PORT=8001
-PEERS=2=localhost:8002,3=localhost:8003,...
+PEERS=2=localhost:8002,3=localhost:8003,4=localhost:8004,5=localhost:8005,6=localhost:8006
 ```
 
 CLI:
 
 ```bash
-./gradlew :raft-client:run --args="1=localhost:8001,2=localhost:8002,3=localhost:8003 put mykey myvalue"
-./gradlew :raft-client:run --args="1=localhost:8001,2=localhost:8002,3=localhost:8003 get mykey"
+./gradlew :raft-client:run --args="1=localhost:8001,2=localhost:8002,3=localhost:8003,4=localhost:8004,5=localhost:8005,6=localhost:8006 put mykey myvalue"
+./gradlew :raft-client:run --args="1=localhost:8001,2=localhost:8002,3=localhost:8003,4=localhost:8004,5=localhost:8005,6=localhost:8006 get mykey"
 ```
 
 Latency toy benchmark (no cluster required):
