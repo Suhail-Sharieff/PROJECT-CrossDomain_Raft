@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CD-Raft: Animated Walkthrough</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f5f7fa;--card:#fff;--ink:#0f264c;--mut:#5b6b85;--blue:#205493;--acc:#d97706;--red:#c0392b;--grn:#1e8e4e;--line:#cdd6e3;color-scheme:light}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1420;--card:#16202f;--ink:#e6edf7;--mut:#9fb0c8;--blue:#6aa3e8;--acc:#f0a23b;--red:#ff7a6b;--grn:#4cc788;--line:#2c3b52;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d1420;--card:#16202f;--ink:#e6edf7;--mut:#9fb0c8;--blue:#6aa3e8;--acc:#f0a23b;--red:#ff7a6b;--grn:#4cc788;--line:#2c3b52;color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 12px}h1 span{color:var(--mut);font-weight:400;font-size:16px}
+#tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 14px;cursor:pointer}
+button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow-x:auto}
+svg{display:block;width:100%;min-width:640px;height:auto}
+#cap{min-height:3.2em;font-size:17px;line-height:1.45;margin:12px 2px}
+.ctl{display:flex;gap:8px;align-items:center}.ctl input{flex:1;accent-color:var(--blue)}
+.foot{color:var(--mut);font-size:12px;margin-top:14px}
+</style></head><body><div class="wrap">
+<h1>CD-Raft <span>Animated walkthrough: problem, solution, working, results</span></h1>
+<nav id="tabs"></nav>
+<div class="card"><svg id="s" viewBox="0 0 800 380" role="img" aria-label="Animated explanation of CD-Raft"></svg></div>
+<p id="cap"></p>
+<div class="ctl"><button id="prev">◀ Prev</button><button id="pp">⏸ Pause</button><button id="next">Next ▶</button><input id="rng" type="range" min="0" max="1000" value="0" aria-label="Scrub"><button id="rep">↻ Replay</button></div>
+<p class="foot">Illustrative animation. Timings are scaled to the measured medians from the project evaluation (9 nodes, 3 emulated regions, Docker + tc/netem).</p>
+</div>
+<script>
+const $=id=>document.getElementById(id),svg=$("s"),NS="http://www.w3.org/2000/svg";
+const cl=(v,a=0,b=1)=>Math.min(b,Math.max(a,v)),sg=(u,a,b)=>cl((u-a)/(b-a));
+function el(tag,at,par){const e=document.createElementNS(NS,tag);for(const k in at){if(k=="fill"||k=="stroke")e.style[k]=at[k];else e.setAttribute(k,at[k])}(par||svg).appendChild(e);return e}
+function tx(x,y,s,o){o=o||{};const e=el("text",{x:x,y:y,"text-anchor":o.a||"middle","font-size":o.s||13,"font-weight":o.w||500,fill:o.c||"var(--ink)"});e.textContent=s;return e}
+const lin=(a,b)=>p=>[a[0]+(b[0]-a[0])*p,a[1]+(b[1]-a[1])*p];
+const quad=(a,c,b)=>p=>{const q=1-p;return[q*q*a[0]+2*q*p*c[0]+p*p*b[0],q*q*a[1]+2*q*p*c[1]+p*p*b[1]]};
+function pk(col,r){const c=el("circle",{r:r||7,fill:col,opacity:0});return(f,p)=>{if(p<=0||p>=1){c.setAttribute("opacity",0);return}const q=f(p);c.setAttribute("cx",q[0]);c.setAttribute("cy",q[1]);c.setAttribute("opacity",1)}}
+const X0=[30,285,540],NM=["US-East · Domain A","EU-West · Domain B","AP-South · Domain C"];
+const NP=(r,i)=>[X0[r]+45+70*i,170];
+const ROLE={F:["var(--card)","var(--mut)","var(--ink)"],L:["var(--acc)","var(--acc)","#fff"],DL:["var(--blue)","var(--blue)","#fff"],GL:["var(--acc)","var(--acc)","#fff"],X:["var(--red)","var(--red)","#fff"]};
+function regions(){for(let r=0;r<3;r++){el("rect",{x:X0[r],y:80,width:230,height:190,rx:14,fill:"none",stroke:"var(--line)","stroke-width":2,"stroke-dasharray":"6 4"});tx(X0[r]+115,258,NM[r],{s:12,c:"var(--mut)"})}}
+function nodes(){const N=[];for(let r=0;r<3;r++)for(let i=0;i<3;i++){const p=NP(r,i);const c=el("circle",{cx:p[0],cy:p[1],r:18,"stroke-width":3});const l=tx(p[0],p[1]+4,"F",{s:12,w:700});const n={c,l,p};role(n,"F");N.push(n)}return N}
+function role(n,k,lab){const R=ROLE[k];n.c.style.fill=R[0];n.c.style.stroke=R[1];n.l.style.fill=R[2];n.l.textContent=lab||k}
+
+/* 1: Problem */
+function s1(){regions();const N=nodes();role(N[0],"L");const C=[400,322],L=N[0].p;
+ el("circle",{cx:400,cy:322,r:14,fill:"var(--blue)"});tx(400,352,"Client (EU-West)",{s:13});
+ const ring=el("circle",{cx:L[0],cy:L[1],r:27,fill:"none",stroke:"var(--red)","stroke-width":3,opacity:0});
+ tx(L[0],206,"Single Leader",{s:12,w:700,c:"var(--acc)"});
+ const big=tx(785,42,"0 ms",{a:"end",s:34,w:800,c:"var(--red)"});tx(785,60,"end-to-end write latency",{a:"end",s:12,c:"var(--mut)"});
+ const msgs=tx(30,40,"",{a:"start",s:15,w:600,c:"var(--red)"});
+ const w=pk("var(--red)"),rs=pk("var(--red)"),rp=[],ak=[];for(let i=0;i<8;i++){rp.push(pk("var(--red)",5));ak.push(pk("var(--mut)",5))}
+ return u=>{w(lin(C,L),sg(u,.05,.25));for(let i=1;i<9;i++){const q=N[i].p;rp[i-1](lin(L,q),sg(u,.27,.47));ak[i-1](lin(q,L),sg(u,.47,.67))}
+  rs(lin(L,C),sg(u,.67,.87));big.textContent=Math.round(sg(u,.05,.87)*272)+" ms";
+  ring.setAttribute("opacity",u>.25&&u<.7?.5+.5*Math.sin(u*60):0);
+  msgs.textContent=u>.27?"Leader sends "+Math.round(sg(u,.27,.47)*8)+" replicate msgs (6 over the WAN)":""}}
+
+/* 2: Solution */
+function s2(){regions();const lan=[];for(let r=0;r<3;r++)for(let i=1;i<3;i++)lan.push(el("line",{x1:NP(r,0)[0],y1:170,x2:NP(r,i)[0],y2:170,stroke:"var(--grn)","stroke-width":4,opacity:0}));
+ const A1=[[75,152],[200,-20],[330,152]],A2=[[75,152],[330,-70],[585,152]];
+ const arcs=[A1,A2].map(a=>el("path",{d:"M"+a[0]+" Q"+a[1]+" "+a[2],fill:"none",stroke:"var(--acc)","stroke-width":3.5,"stroke-dasharray":"8 5",opacity:0}));
+ const N=nodes(),tg=[0,3,6].map(i=>tx(N[i].p[0],206,i?"Domain Leader":"Global Leader",{s:12,w:700,c:i?"var(--blue)":"var(--acc)"}));
+ const ql=[0,1,2].map(r=>tx(X0[r]+115,238,"Q_local = 2 of 3",{s:12,w:700,c:"var(--grn)"}));
+ const qg=tx(400,318,"Q_global = 2 of 3 domains",{s:16,w:700,c:"var(--acc)"}),cmp=tx(400,350,"WAN messages per entry:  Raft 8  →  CD-Raft 2",{s:17,w:800,c:"var(--ink)"});
+ const wp=[A1,A2].map(a=>pk("var(--acc)",7)),lp=[];for(let i=0;i<6;i++)lp.push(pk("var(--grn)",5));
+ return u=>{[0,3,6].forEach((i,k)=>{role(N[i],u>=.15?(i?"DL":"GL"):"F");tg[k].setAttribute("opacity",sg(u,.15,.22))});
+  lan.forEach(l=>l.setAttribute("opacity",sg(u,.35,.45)));ql.forEach(q=>q.setAttribute("opacity",sg(u,.4,.5)));
+  arcs.forEach(a=>a.setAttribute("opacity",sg(u,.55,.65)));qg.setAttribute("opacity",sg(u,.58,.68));cmp.setAttribute("opacity",sg(u,.78,.88));
+  const ph=u>.7?((u-.7)*3.2)%1:0;wp[0](quad(A1[0],A1[1],A1[2]),ph);wp[1](quad(A2[0],A2[1],A2[2]),ph);
+  const ph2=u>.7?((u-.7)*3.2+.5)%1:0;[3,6].forEach((d,k)=>{[1,2].forEach((j,m)=>lp[k*2+m](lin(N[d].p,N[d+j].p),ph2))});
+  if(u>.7){const g=((u-.7)*3.2+.5)%1;lp[4](lin(N[0].p,N[1].p),g);lp[5](lin(N[0].p,N[2].p),g)}}}
+
+/* 3: Write path comparison */
+function s3(){const RY=[100,270],XS=[110,400,690];
+ tx(30,RY[0]-52,"Standard Raft (leader in US-East)",{a:"start",s:15,w:700,c:"var(--red)"});tx(30,RY[1]-52,"CD-Raft with Fast Return",{a:"start",s:15,w:700,c:"var(--blue)"});
+ const NMS=[["Client (EU)","Leader (US)","Quorum replicas"],["Client (EU)","Domain Leader (EU)","Global Leader (US)"]];
+ const LC=[["--red","--red"],["--grn","--red"]];
+ for(let r=0;r<2;r++){const y=RY[r];for(let s=0;s<2;s++){[-7,7].forEach(o=>el("line",{x1:XS[s],y1:y+o,x2:XS[s+1],y2:y+o,stroke:"var("+LC[r][s]+")","stroke-width":2,opacity:.3}))}
+  for(let i=0;i<3;i++){el("circle",{cx:XS[i],cy:y,r:20,fill:"var(--card)",stroke:r?"var(--blue)":"var(--red)","stroke-width":3});tx(XS[i],y+40,NMS[r][i],{s:13})}
+  el("rect",{x:110,y:y+62,width:580,height:10,rx:5,fill:"var(--line)"})}
+ const bar=[0,1].map(r=>el("rect",{x:110,y:RY[r]+62,width:0,height:10,rx:5,fill:r?"var(--blue)":"var(--red)"}));
+ const t1=tx(790,RY[0]-50,"",{a:"end",s:26,w:800,c:"var(--red)"}),t2=tx(790,RY[1]-50,"",{a:"end",s:26,w:800,c:"var(--blue)"});
+ const ban=tx(400,200,"≈ 50% lower latency",{s:22,w:800,c:"var(--grn)"});
+ el("circle",{cx:300,cy:364,r:6,fill:"var(--grn)"});tx(312,368,"LAN hop",{a:"start",s:12,c:"var(--mut)"});el("circle",{cx:410,cy:364,r:6,fill:"var(--red)"});tx(422,368,"WAN hop",{a:"start",s:12,c:"var(--mut)"});
+ const P1=["--red","--red","--red","--red"].map(c=>pk("var("+c+")")),P2=["--grn","--red","--red","--grn"].map(c=>pk("var("+c+")"));
+ const seg=(ck,a,b)=>cl((ck-a)/(b-a)),f=(r,a,b,o)=>lin([XS[a],RY[r]+o],[XS[b],RY[r]+o]);
+ return u=>{const ck=sg(u,.05,.85)*272;
+  P1[0](f(0,0,1,-7),seg(ck,0,68));P1[1](f(0,1,2,-7),seg(ck,68,136));P1[2](f(0,2,1,7),seg(ck,136,204));P1[3](f(0,1,0,7),seg(ck,204,272));
+  P2[0](f(1,0,1,-7),seg(ck,0,8));P2[1](f(1,1,2,-7),seg(ck,8,70));P2[2](f(1,2,1,7),seg(ck,70,130));P2[3](f(1,1,0,7),seg(ck,130,136));
+  const a=Math.min(ck,272),b=Math.min(ck,136);bar[0].setAttribute("width",a/272*580);bar[1].setAttribute("width",b/272*580);
+  t1.textContent=Math.round(a)+" ms";t2.textContent=(b>=136?"✓ ":"")+Math.round(b)+" ms";ban.setAttribute("opacity",sg(u,.88,.96))}}
+
+/* 4: Failover */
+function s4(){regions();const A=[[75,152],[330,-70],[585,152]];el("path",{d:"M"+A[0]+" Q"+A[1]+" "+A[2],fill:"none",stroke:"var(--line)","stroke-width":2,"stroke-dasharray":"6 4"});
+ const N=nodes();role(N[0],"GL");role(N[3],"DL");role(N[6],"DL");
+ const rg=[4,5].map(i=>el("circle",{cx:N[i].p[0],cy:170,r:27,fill:"none",stroke:"var(--acc)","stroke-width":3,opacity:0}));
+ const lab=tx(330,206,"",{s:12,w:700,c:"var(--red)"});
+ const g=pk("var(--acc)"),e1=pk("var(--grn)",5),e2=pk("var(--grn)",5);
+ tx(190,310,"Standard Raft (WAN election)",{a:"end",s:13,c:"var(--red)",w:600});tx(190,340,"CD-Raft (local LAN election)",{a:"end",s:13,c:"var(--blue)",w:600});
+ const b1=el("rect",{x:200,y:297,width:0,height:16,rx:4,fill:"var(--red)"}),b2=el("rect",{x:200,y:327,width:0,height:16,rx:4,fill:"var(--blue)"});
+ const v1=tx(0,310,"",{a:"start",s:13,w:700,c:"var(--red)"}),v2=tx(0,340,"",{a:"start",s:13,w:700,c:"var(--blue)"});
+ return u=>{g(quad(A[0],A[1],A[2]),(u*6)%1);const crash=u>=.12,won=u>=.55;
+  role(N[3],crash?"X":"DL",crash?"✕":"DL");role(N[4],won?"DL":"F");lab.textContent=crash?(won?"new DL elected":"DL crashed"):"";
+  rg.forEach(r=>r.setAttribute("opacity",u>.2&&u<.55?.5+.5*Math.sin(u*70):0));
+  const el_=sg(u,.4,.55);e1(lin(N[4].p,N[5].p),el_);e2(lin(N[5].p,N[4].p),el_);
+  const m1=sg(u,.12,.9)*520,m2=sg(u,.12,.55)*50;b1.setAttribute("width",m1/520*480);b2.setAttribute("width",m2/520*480);
+  v1.setAttribute("x",208+m1/520*480);v2.setAttribute("x",208+m2/520*480);v1.textContent=crash?Math.round(m1)+" ms":"";v2.textContent=crash?"≈ "+Math.round(m2)+" ms":""}}
+
+/* 5: Results */
+function s5(){const D=[["Remote write latency (P50)",272.4,136.2,"ms"],["Write throughput (256 threads)",1205,3850,"ops/s"],["WAN egress per 100k writes",842,212,"MB"],["Leader-crash recovery (worst case)",520,58,"ms"]];
+ const bars=D.map((d,k)=>{const y=34+k*82,m=Math.max(d[1],d[2]);tx(30,y,d[0],{a:"start",s:14,w:700});
+  const a=el("rect",{x:30,y:y+10,width:0,height:16,rx:4,fill:"var(--red)"}),b=el("rect",{x:30,y:y+32,width:0,height:16,rx:4,fill:"var(--blue)"});
+  const va=tx(0,y+23,"",{a:"start",s:13,w:700,c:"var(--red)"}),vb=tx(0,y+45,"",{a:"start",s:13,w:700,c:"var(--blue)"});return{d,m,a,b,va,vb}});
+ tx(300,370,"■ Standard Raft",{s:13,c:"var(--red)",w:700});tx(480,370,"■ CD-Raft",{s:13,c:"var(--blue)",w:700});
+ const fm=n=>n>=100?Math.round(n).toLocaleString("en-US"):String(n);
+ return u=>bars.forEach((o,k)=>{const p=sg(u,.1+k*.2,.35+k*.2),wa=o.d[1]/o.m*600*p,wb=o.d[2]/o.m*600*p;
+  o.a.setAttribute("width",wa);o.b.setAttribute("width",wb);o.va.setAttribute("x",38+wa);o.vb.setAttribute("x",38+wb);
+  o.va.textContent=p>0?fm(o.d[1]*p)+" "+o.d[3]:"";o.vb.textContent=p>0?fm(o.d[2]*p)+" "+o.d[3]:""})}
+
+const S=[
+{n:"1 Problem",d:10000,b:s1,c:[[0,"Standard Raft in a 3-region WAN with one leader in US-East. A client in EU-West writes a key."],[.05,"① The write is forwarded across the ocean to the single leader."],[.27,"② The leader fans out to every follower: 8 messages, 6 over the WAN. All traffic funnels through one node."],[.47,"③ It waits on slow WAN acknowledgments, because a flat quorum ignores region boundaries."],[.67,"④ The reply crosses the ocean again. One write costs ≈ 272 ms."]]},
+{n:"2 Solution",d:11000,b:s2,c:[[0,"CD-Raft keeps Raft, but adds a hierarchy: every region becomes its own small Raft group."],[.15,"Each region elects a Domain Leader (DL). One DL also acts as the Global Leader (GL)."],[.35,"Replication inside a region stays on the fast LAN: Q_local = ⌊N/2⌋ + 1."],[.55,"Only the GL talks to the other Domain Leaders over the WAN: Q_global = ⌊M/2⌋ + 1."],[.75,"An entry commits once a quorum of domains stores it. WAN messages per entry fall from 8 to 2."]]},
+{n:"3 Write path",d:11000,b:s3,c:[[0,"The same remote write from EU-West, run on one shared clock for both protocols."],[.05,"Raft: forward, replicate, acknowledge, reply. Every leg crosses the WAN."],[.3,"CD-Raft: the client talks to its local Domain Leader over the LAN. Only forward and commit cross the WAN."],[.6,"Fast Return: the local DL answers the client directly, removing a transoceanic hop."],[.9,"136 ms vs 272 ms: about 50% lower write latency."]]},
+{n:"4 Failover",d:10000,b:s4,c:[[0,"Normal operation: the Global Leader keeps replicating to the Domain Leaders."],[.12,"The EU Domain Leader crashes."],[.2,"Local followers time out on the short LAN timer (50–100 ms)."],[.4,"They elect a new DL using only the local quorum. No WAN involved."],[.6,"Recovered in about 42–58 ms, and other regions never stopped. Standard Raft needs a full WAN election: 385–520 ms."]]},
+{n:"5 Results",d:9000,b:s5,c:[[0,"Measured on the 9-node, 3-region emulated testbed."],[.1,"Remote write latency is halved."],[.3,"Throughput rises 3.2×, because ingestion is spread across Domain Leaders."],[.5,"WAN egress drops 75%, since traffic flows through M leaders instead of N followers."],[.7,"Domain Leader failover is under 60 ms, contained inside one region."]]}];
+
+const tabs=$("tabs");S.forEach((s,i)=>{const b=document.createElement("button");b.textContent=s.n;b.onclick=()=>load(i);tabs.appendChild(b)});
+let cur=0,t=0,playing=!matchMedia("(prefers-reduced-motion: reduce)").matches,last=performance.now(),upd;
+function setP(p){playing=p;$("pp").textContent=p?"⏸ Pause":"▶ Play"}
+function load(i){cur=i;svg.innerHTML="";upd=S[i].b();t=0;[...tabs.children].forEach((b,j)=>b.classList.toggle("on",j==i))}
+$("pp").onclick=()=>{if(!playing&&t>=1&&cur==S.length-1)t=0;setP(!playing)};
+$("prev").onclick=()=>load(Math.max(0,cur-1));$("next").onclick=()=>load(Math.min(S.length-1,cur+1));
+$("rep").onclick=()=>{load(cur);setP(true)};$("rng").oninput=e=>{setP(false);t=e.target.value/1000};
+function loop(now){const dt=Math.min(100,now-last);last=now;
+ if(playing){t+=dt/S[cur].d;if(t>1.15){if(cur<S.length-1)load(cur+1);else{t=1;setP(false)}}}
+ const u=cl(t);upd(u);const cs=S[cur].c;let k=0;for(let j=0;j<cs.length;j++)if(u>=cs[j][0])k=j;
+ $("cap").textContent=cs[k][1];$("rng").value=u*1000;requestAnimationFrame(loop)}
+setP(playing);load(0);requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,65 @@
+Problems
+Paxos was overly complicated and hard to understand, hence it was hard to debug
+Raft was introduced, but due to constraints in speed of light in optical fibers, deployment in WAN became hard
+Raft was deployed, but there was high latency max around 200+ ms
+In Raft, a single leader used to send ACK to all followers, hence complex management
+Client ---Request---> Leader
+Leader ---AppendEntries---> all followers
+Followers ---->ACK----> Leader
+Leader Commits ----CommitEntry---->Followers
+----------------------------------------------------------
+Solution: CD Raft
+uses Tpopology aware heirarchial concensus
+intra domain latency and interdomain latency is reduced by half
+--------------------------------------------------------
+Features:
+decouples inter and intra domain replication
+parallel concensus happens in inter and intra domain, rather than one single concensus as in raft
+Fast return strategy to enable local domani leader to directly respond local client instead of waiting for global leader to respond as in raft
+Reduction of load on a single node and better load balancing
+--------------------------------------------------------
+Math:
+see report
+do mention quorum formuala: ie ceil(N/2)
+-------------------------------------------------------------
+Safety ensurance:
+only leader with latest commit index and most updated log file is elected
+transactional guarantee
+safety against split brain problem, coz leader cannot be elected in minority side
+crashed node recovery mechanism
+-----------------------------------------------------------
+Technical details:
+Commuication protocol: REST for appyying GET and PUT cmds and gRPC for internal node communication
+Backend: Java 21 and Go
+Build tool: gradle
+Containerization tool: Docker
+Frontend framework: React
+Metric measuring tool:JUnit
+Performance measurement: KPI(key performance indicator)
+------------------------------------------------------------------
+Architechture:
+see report
+draw state transition diagram
+draw inter and intra domain diagrams mentioning followers, global leader and domain leaders
+draw 2 tier architecture
+draw how fast return mechanism work
+------------------------------------------------------
+Results:
+50% write latency reduction in WAN compared to raft in local and global level
+95% read latency reduction at global and 97% in local domain level
+3X throughput/ operations per sec compared to raft
+MTTR(mean time to recover) is almost 2ms which is 300X faster than  standard raft
+0 downtime in most cases
+50ms recovery time for local domain leader crash and just 300ms recovery time for global leader crash, 4X faster election time than raft
+75% reduction in cross domain egress volume traffic 
+--------------------------------------------------------------
+Limitations:
+complex global leader reelection during global leader crash
+eventual consistency
+high memory consumption (150-250 mb)
+complex to implement
+------------------------------------------------------------
+Further Enchancements:
+background job to transfer leader ship among updated nodes for better load balancing ie traffic aware election
+smart leader detection without explicitly specifying leader's IP address
+
